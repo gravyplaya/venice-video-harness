@@ -80,11 +80,23 @@ function buildCharacterFixPrompt(
   wardrobeOverride?: string,
   environment?: ShotEnvironment,
 ): string {
-  const traits = char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS;
+  const traits = char.baseTraits ?? (char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS);
   const wardrobe = wardrobeOverride ?? char.wardrobe;
   const isDaytime = environment && DAYTIME_ENVIRONMENTS.has(environment);
+
+  // Derive subject noun from description/age instead of just gender
+  const descLower = (char.description + ' ' + char.age).toLowerCase();
+  let subjectNoun: string;
+  if (/cat|tabby|feline|kitten/.test(descLower)) {
+    subjectNoun = 'cat';
+  } else if (/child|boy|girl|\d+\s*year\s*old/.test(descLower)) {
+    subjectNoun = char.gender === 'female' ? 'girl' : 'boy';
+  } else {
+    subjectNoun = char.gender === 'female' ? 'woman' : 'man';
+  }
+
   return (
-    `Make the ${char.gender === 'female' ? 'woman' : 'man'} in the scene match the reference image's FACE AND BODY PROPORTIONS ONLY. ` +
+    `Make the ${subjectNoun} in the scene match the reference image's FACE AND BODY PROPORTIONS ONLY. ` +
     `Character: ${char.name}. ${traits}. ${char.fullDescription}. ` +
     `Wearing: ${wardrobe}. ` +
     (wardrobeOverride
@@ -106,8 +118,8 @@ function buildTwoCharacterFixPrompt(
   wardrobeOverrides?: Record<string, string>,
   environment?: ShotEnvironment,
 ): string {
-  const traits1 = char1.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS;
-  const traits2 = char2.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS;
+  const traits1 = char1.baseTraits ?? (char1.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS);
+  const traits2 = char2.baseTraits ?? (char2.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS);
   const wardrobe1 = wardrobeOverrides?.[char1.name.toUpperCase()] ?? char1.wardrobe;
   const wardrobe2 = wardrobeOverrides?.[char2.name.toUpperCase()] ?? char2.wardrobe;
   const hasOverride = wardrobeOverrides && Object.keys(wardrobeOverrides).length > 0;

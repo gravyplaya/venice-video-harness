@@ -1,7 +1,7 @@
 # Character Consistency Skill
 
 ## Description
-Maintain visual consistency for characters across all storyboard panels using a three-layer approach.
+Maintain visual consistency for characters across all storyboard panels and video clips using a multi-layer approach covering prompt construction, reference generation, multi-edit refinement, and R2V video anchoring.
 
 ## Layer 1: Exhaustive Text Description
 Every character in every shot prompt receives their complete locked description. No abbreviations, no "same as before." The model sees the full description each time.
@@ -24,39 +24,89 @@ CHARACTER_NAME: [age]-year-old [ethnicity/appearance], [hair description],
 - Default wardrobe + scene-specific wardrobe changes
 
 ## Layer 2: Reference Image Generation & Seed Anchoring
-Venice `nano-banana-pro` does NOT accept reference image payloads via API parameters (no `image_references`, `image_1`, etc.). Passing these causes a 400 error. Instead, character consistency relies on:
 
-- **Seed anchoring**: Each character gets a fixed seed recorded at lock time. The same seed is used for all reference angles and influences generation consistency.
-- **Prompt-embedded identity markers**: Include "Image N: face reference for CHARACTER" text in prompts. While no actual image data is sent, this text anchors the model's attention on maintaining the described appearance.
-- **Exhaustive re-description**: The full character description (Layer 1) is the primary consistency mechanism. Every prompt repeats the complete physical description.
+### Prompt Structure for References (CRITICAL)
+Style descriptions must be **front-loaded** in the prompt to prevent style drift between angles:
 
-### Reference Generation
-4 angles per character are generated and stored for human review (NOT sent to the API):
-1. Front face (primary reference sheet)
-2. Three-quarter view
-3. Profile view
-4. Full body
+```
+STYLE: [full aesthetic string]. [angle description]. [character description].
+[base traits]. [no-layout instructions]. [wardrobe].
+STYLE REMINDER: [style], [film stock].
+```
 
-These reference images serve as:
-- Visual documentation for the production team
-- Comparison targets when reviewing generated panels for drift
-- Input for Layer 3 (edit endpoint correction) when faces need fixing
+**Anti-pattern:** Putting aesthetic at the END causes the model to commit to a rendering style before seeing style instructions, producing inconsistent angles (e.g., front is cartoon, profile is photorealistic).
 
-### Seed Tracking
-- Same seed used for all reference angles of a character
-- Seed recorded in `character-lock.json` for reproducibility
-- Panel seeds are derived from character seed + shot number
+### Generation Parameters
+- **cfg_scale: 10** (not 7 — higher values enforce tighter prompt adherence and prevent style drift)
+- **Negative prompt must include:** `photorealistic, photograph, photo` alongside standard negative terms — this prevents the model from drifting toward realism when the target aesthetic is stylized/illustration
+- **Fixed seed** per character, recorded at lock time
+- **Resolution:** 1K, aspect ratio 1:1 for references
 
-## Layer 3: Edit Endpoint Correction
-When generated images have good composition but face drift:
-1. Use Venice `/images/edit` with mask over face area
-2. Prompt: "correct face to match reference - [key features]"
-3. If edit fails, regenerate with adjusted seed + reinforced description
+### Reference Angles
+4 angles per character are generated and stored:
+1. Front face (primary reference — used for `elements.frontal_image_url`)
+2. Three-quarter view (used for `elements.reference_image_urls`)
+3. Profile view (used for `elements.reference_image_urls`)
+4. Full body (used for composition reference)
+
+### Two-Pass Fallback for Persistent Style Drift
+When base generation produces stylistically inconsistent angles despite front-loaded prompts and high cfg_scale:
+
+1. **Keep the good reference** (usually front or three-quarter)
+2. **Regenerate the drifting angle** as a base image
+3. **Style-match via multi-edit** against the good reference:
+   ```
+   Prompt: "Match the exact art style, rendering technique, color treatment,
+   and illustration style of the reference image (image 2). Keep the pose,
+   angle, and composition of the base image (image 1)."
+   Images: [base (drifting angle), reference (good angle)]
+   Model: nano-banana-pro-edit
+   ```
+4. This forces the edit model to adopt the rendering style of the good reference while preserving the pose
+
+## Layer 3: Multi-Edit Panel Refinement
+When generated storyboard panels have good composition but character drift:
+
+### Character Shots (has characters in shot)
+- **Images sent:** Panel + 1-2 character front-facing references
+- **Prompt:** Match face, body proportions, and wardrobe to references
+- **Respects:** Per-episode wardrobe overrides, environment adaptation
+
+### Non-Character Shots (establishing, insert, title)
+- **Images sent:** Panel + style anchor (a refined character shot from same project)
+- **Prompt:** Match rendering style, palette, line weight, lighting
+- **Important:** Use a pre-refinement snapshot as style anchor — post-refinement panels can inherit layout artifacts from character reference sheets
+
+### Post-Refinement
+Multi-edit always returns 1024x1024 → crop center + scale to original aspect ratio (e.g., 768x1376 for 9:16)
+
+## Layer 4: R2V Video Identity Anchoring
+
+The most critical consistency layer for video generation. **R2V models are the only Venice video models that support character reference images.**
+
+### How It Works
+- Model: `kling-o3-standard-reference-to-video`
+- **`elements` parameter:** Each character gets a structured element with:
+  - `frontal_image_url`: front-facing character reference
+  - `reference_image_urls`: three-quarter and profile angles (up to 3)
+- **`reference_image_urls` parameter:** Flat array backup (up to 4 images)
+- **Prompt integration:** Character names replaced with `@Element1`, `@Element2` tokens
+
+### Critical Rules
+1. **Only R2V models support elements/reference_image_urls.** The Kling multi-shot model (`kling-o3-pro-image-to-video`), Kling V3 Pro, Veo 3.1, and all other non-R2V models have ZERO reference support.
+2. **Never group shots with different characters into multi-shot units.** Multi-shot units use non-R2V models. Characters lose all identity anchoring.
+3. **For talk shows, interviews, and panel formats:** Set `mustStaySingle: true` on all shots to force R2V singles.
+
+### Format-Specific Guidance
+
+| Format | Grouping Strategy | Reason |
+|--------|------------------|--------|
+| Talk show / interview | All singles with R2V | Frequent speaker cuts, identity > continuity |
+| Continuous action scene | Multi-shot OK if same characters | Temporal continuity benefits outweigh |
+| Drama with cuts | Singles for close-ups/reactions, multi-shot for continuous action | Balance both |
 
 ## Usage
 ```typescript
-import { ReferenceManager } from './characters/reference-manager.js';
-const manager = new ReferenceManager(outputDir);
-const lock = await manager.generateReferences(client, description);
-const faceBase64 = manager.getBase64Face(lock);
+import { buildCharacterReferencePrompt } from './mini-drama/prompt-builder.js';
+const prompt = buildCharacterReferencePrompt(character, aesthetic, 'front');
 ```

@@ -236,15 +236,16 @@ program
   .option('--description <desc>', 'Physical description')
   .option('--wardrobe <wardrobe>', 'Default wardrobe', 'stylish contextual attire')
   .option('--voice-desc <voiceDesc>', 'Voice description (pitch, timbre, accent, cadence)')
+  .option('--base-traits <traits>', 'Custom base traits override (e.g. "tabby cat, feline, four legs")')
   .option('--skip-images', 'Skip reference image generation', false)
   .action(async (opts: {
     project: string; name: string; gender: string; age: string;
-    description?: string; wardrobe: string; voiceDesc?: string; skipImages: boolean;
+    description?: string; wardrobe: string; voiceDesc?: string; baseTraits?: string; skipImages: boolean;
   }) => {
     const series = await loadSeries(resolve(opts.project));
     if (!series) { console.error('Series not found.'); process.exit(1); }
 
-    const baseTraits = opts.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS;
+    const baseTraits = opts.baseTraits ?? (opts.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS);
     const physicalDesc = opts.description || `${opts.age}, ${baseTraits}`;
 
     const defaultVoice = opts.gender === 'female'
@@ -262,6 +263,7 @@ program
       fullDescription: `${opts.name}, ${opts.age}, ${physicalDesc}`,
       wardrobe: opts.wardrobe,
       voiceDescription,
+      ...(opts.baseTraits ? { baseTraits: opts.baseTraits } : {}),
       locked: false,
       seed,
     };
@@ -285,11 +287,11 @@ program
         try {
           const response = await generateImage(client, {
             prompt,
-            negative_prompt: 'deformed, blurry, bad anatomy, low quality, multiple people, text, watermark, character reference sheet, annotations, labels, inset panels, detail callouts, multi-view layout, comic panels, panel borders',
+            negative_prompt: 'deformed, blurry, bad anatomy, low quality, multiple people, text, watermark, character reference sheet, annotations, labels, inset panels, detail callouts, multi-view layout, comic panels, panel borders, photorealistic, photograph, photo',
             resolution: '1K',
             aspect_ratio: '1:1',
             steps: 30,
-            cfg_scale: 7,
+            cfg_scale: 10,
             seed,
             safe_mode: false,
             hide_watermark: true,
@@ -435,7 +437,7 @@ program
 
     // Build character summaries
     const charSummaries = series.characters.map(c => {
-      const baseTraits = c.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS;
+      const baseTraits = c.baseTraits ?? (c.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS);
       return `${c.name} (${c.gender}, ${c.age}): ${baseTraits}. ${c.fullDescription}. Wardrobe: ${c.wardrobe}. Voice: ${c.voiceDescription}`;
     }).join('\n');
 

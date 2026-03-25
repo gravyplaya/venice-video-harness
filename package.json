@@ -1,7 +1,7 @@
 {
   "name": "venice-video-harness",
-  "version": "1.0.0",
-  "description": "Agent-first Venice-optimized harness for consistent video creation",
+  "version": "2.0.0",
+  "description": "Agent-first Venice-optimized harness for consistency-first video creation -- series, branded content, narrative, or any multi-shot workflow",
   "homepage": "https://github.com/jordanurbs/venice-video-harness",
   "repository": {
     "type": "git",
@@ -16,15 +16,25 @@
     "venice",
     "venice-ai",
     "ai-video",
-    "storyboard",
+    "video-generation",
     "video-harness",
     "consistent-video",
+    "storyboard",
+    "image-to-video",
+    "text-to-video",
+    "multi-shot",
+    "character-consistency",
     "claude-code",
-    "cursor"
+    "cursor",
+    "kling",
+    "veo",
+    "sora",
+    "wan",
+    "ltx-video"
   ],
   "bin": {
+    "venice-video": "./dist/mini-drama/cli.js",
     "video-harness": "./dist/mini-drama/cli.js",
-    "mini-drama": "./dist/mini-drama/cli.js",
     "storyboard": "./dist/cli.js"
   },
   "scripts": {

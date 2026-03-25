@@ -1,156 +1,210 @@
 # Venice Video Harness
 
-Agent-first, Venice-optimized tooling for consistency-first video creation.
+Agent-first, Venice-optimized tooling for **consistency-first video creation** at any length.
 
-This harness is built for creators who want an IDE agent such as Claude Code to operate a reusable Venice production system for:
-- character-consistent video projects
-- visual-style-locked series or campaigns
-- storyboard-to-video workflows
-- short-form narrative, branded, trailer, social, or cinematic sequences
-- repeated generation where continuity matters more than one-off novelty
+This harness is built for creators who want an IDE agent (Claude Code, Cursor, etc.) to operate a reusable Venice production system for:
+
+- **Character-consistent video projects** (any genre, any length)
+- **Visual-style-locked series or campaigns**
+- **Storyboard-to-video workflows**
+- **Short-form and long-form narrative content** (mini-dramas, documentaries, explainers)
+- **Branded cinematic sequences, trailers, and teasers**
+- **Recurring-character social series**
+- **Any multi-shot Venice workflow where continuity matters**
 
 ## What This Is
 
-Most Venice integrations are thin wrappers around API calls. This harness is the higher-level layer on top:
-- orchestration rules in `CLAUDE.md`
-- reusable playbooks in `.claude/commands/`
-- specialized agents in `.claude/agents/`
-- reusable Venice skills in `.claude/skills/`
-- TypeScript execution code underneath in `src/`
+Most Venice integrations are thin wrappers around API calls. This harness is the higher-level layer:
 
-The goal is not just "generate a clip." The goal is to help an agent consistently plan, generate, refine, QA, and assemble visually coherent video work.
+- **Orchestration rules** in `CLAUDE.md`
+- **Reusable playbooks** in `.claude/commands/`
+- **Specialized agents** in `.claude/agents/`
+- **Venice production skills** in `.claude/skills/`
+- **TypeScript execution layer** in `src/`
+- **Comprehensive model registry** covering 50+ Venice video, image, audio, and music models
 
-## What It Can Be Used For
+## Supported Venice Models (March 2026)
 
-This rig is intended to be adapted for projects like:
-- episodic fiction
-- trailers and teasers
-- branded cinematic sequences
-- recurring-character social series
-- narrative explainers
-- style-locked creative campaigns
-- any Venice workflow where image-to-video consistency matters
+### Video Models
 
-## Included Reference Implementation
+| Family | Image-to-Video | Text-to-Video | Max Duration | Audio | Special Features |
+|--------|---------------|---------------|-------------|-------|-----------------|
+| **Kling V3** | Pro, Standard | Pro, Standard | 15s | Yes | `end_image_url` for frame targeting |
+| **Kling O3** | Pro, Standard, Pro R2V, Standard R2V | Pro, Standard | 15s | Yes | R2V: `elements`, `reference_image_urls`, `scene_image_urls` |
+| **Kling 2.6** | Pro | Pro | 10s | Yes | `end_image_url` |
+| **Veo 3.1** | Fast, Full | Fast, Full | 8s | Yes | Up to 4K resolution |
+| **Veo 3** | Fast, Full | Fast, Full | 8s | Yes | |
+| **Sora 2** | Standard, Pro | Standard, Pro | 12s | Yes | Up to 1080p |
+| **Wan 2.6** | Standard, Flash | Standard | 15s | Yes | 1080p, `audio_url` input |
+| **LTX Video 2.0** | Fast, Full, v2.3, 19B | Fast, Full, v2.3, 19B | 20s | Yes | Up to 4K, longest durations |
+| **Longcat** | Standard, Distilled | Standard, Distilled | **30s** | No | Longest single-shot duration |
+| **Vidu Q3** | Yes | Yes | 16s | Yes | `reference_image_urls` |
+| **PixVerse v5.6** | Standard, Transition | Standard | 8s | Yes | Transition: `end_image_url` |
+| **Grok Imagine** | Yes | Yes | 15s | Yes | Wide aspect ratio support |
+| **OVI** | Yes | — | 5s | Yes | |
 
-This repository ships with a working reference implementation for narrative mini-drama production inside:
+### Image Models
 
-```text
-src/mini-drama/
-```
+`nano-banana-pro`, `nano-banana-2`, `flux-2-pro`, `flux-2-max`, `gpt-image-1-5`, `grok-imagine`, `hunyuan-image-v3`, `qwen-image-2`, `qwen-image-2-pro`, `recraft-v4`, `recraft-v4-pro`, `seedream-v4`, `seedream-v5-lite`, `chroma`, `hidream`, and more.
 
-That reference pipeline includes series, characters, episodes, storyboard generation, QA, video generation, audio, and assembly.
+### Multi-Edit Models
 
-Use it in one of two ways:
-- operate it directly as the included reference implementation
-- treat it as the starting harness and adapt the commands, agents, and rules to your own video format
+`qwen-edit`, `qwen-image-2-edit`, `qwen-image-2-pro-edit`, `flux-2-max-edit`, `gpt-image-1-5-edit`, `grok-imagine-edit`, `nano-banana-2-edit`, `nano-banana-pro-edit`, `seedream-v4-edit`, `seedream-v5-lite-edit`
 
-The currently bundled `.claude/commands/` and `src/mini-drama/` workflows are narrative-oriented starter playbooks. They are included because they are a strong reference implementation for consistency-first Venice video work, not because the harness is limited to mini-dramas forever.
+### Audio / Music Models
+
+- **TTS**: `tts-kokoro` (50+ voices), `tts-qwen3-0-6b`, `tts-qwen3-1-7b` (style-prompted voices)
+- **Music**: `elevenlabs-music`, `minimax-music-v2`, `ace-step-15`, `stable-audio-25`
+- **SFX**: `elevenlabs-sound-effects-v2`, `mmaudio-v2-text-to-audio`
+- **TTS (ElevenLabs)**: `elevenlabs-tts-v3`, `elevenlabs-tts-multilingual-v2`
 
 ## What Makes It Venice-Optimized
 
-- image prompts tuned for Venice image generation
-- two-pass panel generation with Venice multi-edit refinement
-- model-routing logic for action, atmosphere, and character-consistency tiers
-- support for reference-aware Venice video generation
-- environment-aware prompt adaptation for daytime vs night scenes
+- Image prompts tuned for Venice image generation models
+- Two-pass panel generation with Venice multi-edit refinement
+- **Model-routing logic** for action, atmosphere, and character-consistency tiers
+- Support for reference-aware video generation (`elements`, `reference_image_urls`, `scene_image_urls`)
+- Environment-aware prompt adaptation (daytime vs night scenes)
 - Venice-native audio generation paths for TTS, SFX, and music
-
-## Preferred Video Models
-
-The harness is opinionated about model choice because consistency is the point:
-
-- `kling-v3-pro-image-to-video` for action, movement, dialogue, and stronger cinematic motion
-- `veo3.1-fast-image-to-video` for atmosphere, inserts, establishing shots, and quieter beats
-- Kling O3 reference-capable models when identity consistency is critical and reference attachments are worth the extra cost
-
-## Budgeting Note
-
-This harness assumes you want best-of-the-best output quality, not bargain-mode generation.
-
-That means you should budget for:
-- repeated image generation and multi-edit passes
-- premium video generations
-- reference-driven consistency passes
-- Venice TTS, SFX, ambience, and music where needed
-- iteration cost when refining continuity problems
-
-Treat this as a quality-first production harness and plan API spend accordingly.
-
-## Intended Runtime
-
-This is not a CLI-first end-user app.
-
-It is meant to be operated in an IDE like Cursor or VS Code with an agent such as Claude Code. The user directs the workflow in natural language. The agent reads the project rules, chooses the relevant playbooks, and runs code as needed.
-
-In other words: the CLI and scripts are the execution layer underneath the harness, not the primary product surface.
+- **Video quote endpoint** for cost estimation before generation
+- Model-aware parameter building (auto-skips unsupported params per model)
 
 ## Project Structure
 
-```text
+```
 CLAUDE.md                    Agent orchestration hub
 .claude/commands/            Workflow playbooks
 .claude/agents/              Specialized agent roles
 .claude/skills/              Venice and workflow knowledge
-src/mini-drama/              Reference narrative video implementation
-src/venice/                  Venice API client and media helpers
-src/storyboard/              Storyboard and legacy helpers
-scripts/                     Utility scripts for generation and post-production
-output/                      Generated project data (gitignored)
+src/
+  venice/                    Venice API client layer
+    client.ts                HTTP transport, retries, rate limiting
+    models.ts                Complete model registry (50+ models)
+    video.ts                 Video queue/retrieve/quote/complete
+    generate.ts              Image generation
+    multi-edit.ts            Multi-image layered editing
+    edit.ts                  Upscale, background remove (inpaint deprecated)
+    audio.ts                 TTS, music, SFX, queued audio
+    voices.ts                Voice catalog (Kokoro + Qwen3)
+    types.ts                 Full API type definitions
+  series/                    Project state and character management
+  mini-drama/                Reference narrative video implementation
+  storyboard/                Legacy screenplay storyboard pipeline
+  characters/                Character extraction and references
+  parsers/                   Fountain + PDF screenplay parsing
+  assembly/                  Remotion scaffold and manifest
+scripts/                     Utility scripts
+templates/                   HTML templates
+output/                      Generated projects (gitignored)
 ```
 
-## Getting Started In Agent Chat
+## Getting Started
 
-1. Open the project in Cursor or VS Code.
-2. Make sure the agent can read `CLAUDE.md`, `.claude/commands/`, and `.claude/skills/`.
-3. Make sure `VENICE_API_KEY` is available via `.env`.
-4. Ask the agent to initialize the harness if dependencies are not installed yet.
-5. Then direct the agent in natural language.
-
-Good first messages:
-
-- "Set up this Venice video harness for first use"
-- "Help me build a consistent character-driven video workflow"
-- "Create a reusable Venice pipeline for a branded short-form series"
-- "Use the included narrative implementation to start a new project"
-
-If the harness is operating correctly, the agent should:
-- read the orchestration rules in `CLAUDE.md`
-- select the right playbook from `.claude/commands/`
-- load any relevant Venice skill(s)
-- install dependencies and run setup steps if needed
-- execute the underlying code for you
-
-## Requirements
+### Requirements
 
 - Node.js 20+
 - `ffmpeg` and `ffprobe` on your PATH
-- a `VENICE_API_KEY`
+- A `VENICE_API_KEY` (get one at [venice.ai](https://venice.ai))
 
-## Setup
-
-Ask the agent to initialize local setup. That setup should include:
-- creating `.env` from `.env.example` if needed
-- confirming `VENICE_API_KEY` is present
-- installing dependencies for the execution layer
-- validating the build
-
-The environment file should contain:
+### Setup
 
 ```bash
-VENICE_API_KEY=your_key_here
-```
-
-Typical setup commands the agent may run under the hood:
-
-```bash
+cp .env.example .env
+# Add your VENICE_API_KEY to .env
 npm install
 npm run build
 ```
 
-## Notes
+### In Agent Chat
 
-- This harness is intentionally opinionated and Venice-specific
-- It is agent-operated first, not terminal-operated first
-- The included mini-drama pipeline is a reference implementation, not the only intended use case
-- To broaden it for a different format, adapt `CLAUDE.md`, `.claude/commands/`, and the reference workflow in `src/`
+Open the project in Cursor or VS Code. The agent reads `CLAUDE.md` and the playbooks to operate the harness.
+
+Good first messages:
+
+- "Set up this Venice video harness for first use"
+- "Create a new character-consistent video series"
+- "Generate a 30-second branded video sequence"
+- "Build a multi-episode narrative with locked characters"
+- "Create a product launch trailer with consistent visual style"
+
+### Programmatic Usage
+
+```typescript
+import { VeniceClient } from './src/venice/client.js';
+import { generateVideo, quoteVideo } from './src/venice/video.js';
+import { listVideoModels, getVideoModel } from './src/venice/models.js';
+
+const client = new VeniceClient();
+
+// Get a cost estimate
+const quote = await quoteVideo(client, {
+  model: 'kling-v3-pro-image-to-video',
+  duration: '8s',
+  audio: true,
+});
+console.log(`Estimated cost: $${quote.quote}`);
+
+// Generate a video
+const result = await generateVideo(client, {
+  model: 'kling-v3-pro-image-to-video',
+  prompt: 'A slow dolly shot pushes forward...',
+  duration: '8s',
+  imageUrl: 'data:image/png;base64,...',
+  audio: true,
+  outputPath: 'output/shot-001.mp4',
+});
+
+// Query model capabilities
+const longModels = listVideoModels({ minDurationSec: 20 });
+const refModels = listVideoModels({ supportsElements: true });
+```
+
+## Video Model Routing
+
+The harness defaults are opinionated because consistency is the point:
+
+**R2V by default. Atmosphere model only for empty establishing shots.**
+
+Almost all shots should use the R2V (reference-to-video) model for consistency. It supports `elements` and `reference_image_urls` for identity anchoring. Non-R2V models have zero reference support. The atmosphere model is only for truly empty establishing/mood shots with no characters.
+
+| Role | Default Model | When Used |
+|------|--------------|-----------|
+| **Default (all non-establishing)** | `kling-o3-standard-reference-to-video` | All shots with characters or story action — `elements` + `reference_image_urls` |
+| **Establishing / mood only** | `veo3.1-fast-image-to-video` | Empty establishing/mood shots — up to 4K |
+
+These defaults are overridable per-project via `series.json` → `videoDefaults`.
+
+## Reference Implementation
+
+The `src/mini-drama/` directory contains a full working implementation for narrative mini-drama production. Use it directly or adapt the patterns for your own format:
+
+- Series/character/episode management
+- Script workshopping via LLM
+- Two-pass storyboard generation (generate + multi-edit refine)
+- Vision-based QA
+- Video generation with frame chaining
+- Audio post-production with layered ambient beds
+- Subtitle burn-in and final assembly
+
+## API Coverage
+
+| Venice Endpoint | Status | Module |
+|----------------|--------|--------|
+| `POST /image/generate` | Full | `generate.ts` |
+| `POST /image/multi-edit` | Full | `multi-edit.ts` |
+| `POST /image/upscale` | Full | `edit.ts` |
+| `POST /image/background-remove` | Full | `edit.ts` |
+| `POST /video/queue` | Full | `video.ts` |
+| `POST /video/retrieve` | Full | `video.ts` |
+| `POST /video/quote` | Full | `video.ts` |
+| `POST /video/complete` | Full | `video.ts` |
+| `POST /audio/speech` | Full | `audio.ts` |
+| `POST /audio/queue` | Full | `audio.ts` |
+| `POST /audio/retrieve` | Full | `audio.ts` |
+| `POST /audio/complete` | Full | `audio.ts` |
+| `POST /chat/completions` | Partial | `client.ts` (vision) |
+| `POST /images/edit` | Deprecated | `edit.ts` |
+
+## License
+
+MIT

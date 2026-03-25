@@ -76,7 +76,7 @@ const CAMERA_TERMS: Record<string, string> = {
 };
 
 function getCharacterPromptText(char: MiniDramaCharacter): string {
-  const baseTraits = char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS;
+  const baseTraits = char.baseTraits ?? (char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS);
   return `${char.name} (${baseTraits}): ${char.fullDescription}`;
 }
 
@@ -123,23 +123,25 @@ export interface ModelResolution {
   autoUseReferenceImages: boolean;
 }
 
-const IDENTITY_SENSITIVE_TYPES = new Set(['close-up', 'reaction']);
-
 /**
- * Intelligently selects the video model for a shot based on its
- * characteristics. Upgrades from the default action/atmosphere model
- * to the character-consistency model (O3 R2V) when identity anchoring
- * is important — close-ups, reactions, new character entrances, or
- * explicit opt-in via shot flags.
+ * Selects the video model for a shot. The core principle is simple:
  *
- * When the resolved model supports elements or reference images,
- * those capabilities are auto-enabled (the shot no longer needs
- * manual `useElements`/`useReferenceImages` flags).
+ *   - **R2V by default** for all non-establishing shots (consistency first)
+ *   - **Atmosphere model only** for truly empty establishing/mood shots
+ *
+ * R2V models accept `elements` and `reference_image_urls`, which are the
+ * only reliable way to maintain character identity across shots. Since the
+ * action model now defaults to R2V, almost all shots benefit from reference
+ * anchoring. The atmosphere model is reserved for truly empty
+ * establishing/insert shots with no characters on screen.
+ *
+ * When the resolved model supports elements or reference images, those
+ * capabilities are auto-enabled.
  */
 export function resolveVideoModel(
   shot: ShotScript,
   series: SeriesState,
-  previousShot?: ShotScript,
+  _previousShot?: ShotScript,
 ): ModelResolution {
   const baseModel = shot.videoModel === 'action'
     ? series.videoDefaults.actionModel
@@ -150,16 +152,7 @@ export function resolveVideoModel(
 
   const hasCharacters = shot.characters.length > 0;
 
-  if (shot.useElements || shot.useReferenceImages) {
-    return {
-      modelId: consistencyModel,
-      upgraded: consistencyModel !== baseModel,
-      reason: 'explicit useElements/useReferenceImages requested',
-      autoUseElements: MODELS_SUPPORTING_ELEMENTS.has(consistencyModel),
-      autoUseReferenceImages: MODELS_SUPPORTING_REFERENCE_IMAGES.has(consistencyModel),
-    };
-  }
-
+  // No characters on screen — use the prompt-first action/atmosphere model
   if (!hasCharacters) {
     return {
       modelId: baseModel,
@@ -170,46 +163,13 @@ export function resolveVideoModel(
     };
   }
 
-  if (IDENTITY_SENSITIVE_TYPES.has(shot.type)) {
-    return {
-      modelId: consistencyModel,
-      upgraded: consistencyModel !== baseModel,
-      reason: `identity-sensitive shot type (${shot.type})`,
-      autoUseElements: MODELS_SUPPORTING_ELEMENTS.has(consistencyModel),
-      autoUseReferenceImages: MODELS_SUPPORTING_REFERENCE_IMAGES.has(consistencyModel),
-    };
-  }
-
-  if (shot.continuityPriority === 'identity') {
-    return {
-      modelId: consistencyModel,
-      upgraded: consistencyModel !== baseModel,
-      reason: 'continuityPriority set to identity',
-      autoUseElements: MODELS_SUPPORTING_ELEMENTS.has(consistencyModel),
-      autoUseReferenceImages: MODELS_SUPPORTING_REFERENCE_IMAGES.has(consistencyModel),
-    };
-  }
-
-  if (previousShot) {
-    const prevChars = new Set(previousShot.characters.map(n => n.toUpperCase()));
-    const newCharsEntering = shot.characters.some(n => !prevChars.has(n.toUpperCase()));
-    if (newCharsEntering) {
-      return {
-        modelId: consistencyModel,
-        upgraded: consistencyModel !== baseModel,
-        reason: 'new character entering scene — reference anchoring needed',
-        autoUseElements: MODELS_SUPPORTING_ELEMENTS.has(consistencyModel),
-        autoUseReferenceImages: MODELS_SUPPORTING_REFERENCE_IMAGES.has(consistencyModel),
-      };
-    }
-  }
-
+  // Any shot with characters uses R2V for identity anchoring
   return {
-    modelId: baseModel,
-    upgraded: false,
-    reason: 'default prompt-first model',
-    autoUseElements: false,
-    autoUseReferenceImages: false,
+    modelId: consistencyModel,
+    upgraded: consistencyModel !== baseModel,
+    reason: 'characters present — R2V for identity anchoring',
+    autoUseElements: MODELS_SUPPORTING_ELEMENTS.has(consistencyModel),
+    autoUseReferenceImages: MODELS_SUPPORTING_REFERENCE_IMAGES.has(consistencyModel),
   };
 }
 
@@ -256,7 +216,7 @@ export function buildImagePrompt(
     for (const charName of shot.characters) {
       const char = series.characters.find(c => c.name.toUpperCase() === charName.toUpperCase());
       if (char) {
-        const baseTraits = char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS;
+        const baseTraits = char.baseTraits ?? (char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS);
         const wardrobe = shot.episodeWardrobe?.[charName.toUpperCase()] ?? char.wardrobe;
         parts.push(`${char.name} (${baseTraits}): ${char.description}, wearing ${wardrobe}.`);
       }
@@ -290,7 +250,7 @@ function buildCharacterAnchorText(characters: MiniDramaCharacter[]): string {
   if (characters.length === 0) return '';
 
   const anchors = characters.map(char => {
-    const baseTraits = char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS;
+    const baseTraits = char.baseTraits ?? (char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS);
     return `${char.name}: ${baseTraits}, ${char.fullDescription}, wearing ${char.wardrobe}`;
   });
 
@@ -310,10 +270,13 @@ function buildCompactAestheticString(aesthetic: AestheticProfile): string {
 function summarizeCharacterForMultiShot(
   char: MiniDramaCharacter,
   wardrobeOverride?: string,
+  elementSlot?: CharacterElementSlot,
 ): string {
   const wardrobe = wardrobeOverride ?? char.wardrobe;
   const shortWardrobe = wardrobe.split(',').slice(0, 2).join(',').trim();
-  return `${char.name}: ${char.age}, ${char.description.split(',').slice(0, 3).join(',').trim()}, wearing ${shortWardrobe}`;
+  const baseTraits = char.baseTraits ?? (char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS);
+  const label = elementSlot ? `@Element${elementSlot.elementIndex} (${char.name})` : char.name;
+  return `[${label}: ${baseTraits}, ${char.age}, ${char.description.split(',').slice(0, 3).join(',').trim()}, wearing ${shortWardrobe}]`;
 }
 
 export function buildVideoPrompt(
@@ -340,7 +303,7 @@ export function buildVideoPrompt(
   let characterElements: CharacterElementSlot[] | undefined;
 
   if (useElements && resolvedCharacters.length > 0) {
-    characterElements = resolvedCharacters.slice(0, 4).map((char, index) => ({
+    characterElements = resolvedCharacters.slice(0, 2).map((char, index) => ({
       characterName: char.name,
       elementIndex: index + 1,
     }));
@@ -426,6 +389,18 @@ export function buildKlingMultiShotPrompt(
     .map(name => series.characters.find(char => char.name.toUpperCase() === name))
     .filter((char): char is MiniDramaCharacter => Boolean(char));
 
+  // Build element slots for identity anchoring (Kling O3 Pro supports elements)
+  const useElements = MODELS_SUPPORTING_ELEMENTS.has(KLING_MULTISHOT_MODEL);
+  let characterElements: CharacterElementSlot[] | undefined;
+  if (useElements && uniqueCharacters.length > 0) {
+    characterElements = uniqueCharacters.slice(0, 2).map((char, index) => ({
+      characterName: char.name,
+      elementIndex: index + 1,
+    }));
+  }
+
+  const useRefs = MODELS_SUPPORTING_REFERENCE_IMAGES.has(KLING_MULTISHOT_MODEL);
+
   const wardrobeByChar = new Map<string, string>();
   for (const shot of shots) {
     if (!shot.episodeWardrobe) continue;
@@ -436,22 +411,42 @@ export function buildKlingMultiShotPrompt(
     }
   }
 
+  // --- Kling 3.0 multi-shot prompt structure ---
+  // 1. Define core subjects up front with consistent labels
+  // 2. Label each shot as a distinct unit with cinematic direction
+  // 3. Describe camera relationship to subjects explicitly
+  // 4. Use @Element refs for identity anchoring when supported
+
   const parts: string[] = [];
+
+  // Core subjects block — define once, reference consistently
   if (uniqueCharacters.length > 0) {
-    parts.push(`Subjects: ${uniqueCharacters.map(char =>
-      summarizeCharacterForMultiShot(char, wardrobeByChar.get(char.name.toUpperCase())),
-    ).join('; ')}.`);
+    parts.push(`Subjects: ${uniqueCharacters.map(char => {
+      const slot = characterElements?.find(s => s.characterName.toUpperCase() === char.name.toUpperCase());
+      return summarizeCharacterForMultiShot(char, wardrobeByChar.get(char.name.toUpperCase()), slot);
+    }).join(' ')}`);
   }
 
-  parts.push('One continuous multi-shot sequence. Keep faces, wardrobe, and visual continuity stable.');
+  parts.push(`${shots.length}-shot continuous sequence. Lock faces, wardrobe, and environment across all shots.`);
 
+  // Per-shot blocks — cinematic direction, not object lists
   for (let index = 0; index < shots.length; index++) {
     const shot = shots[index];
     const cameraTerm = CAMERA_TERMS[shot.cameraMovement.toLowerCase()] ?? shot.cameraMovement;
     const shotParts: string[] = [];
 
-    shotParts.push(`Shot ${index + 1} (${parseShotDuration(shot.duration)} seconds): ${cameraTerm}.`);
-    shotParts.push(shot.description);
+    shotParts.push(`Shot ${index + 1} (${parseShotDuration(shot.duration)}s):`);
+    shotParts.push(`${cameraTerm}.`);
+
+    // Replace character names with @Element refs in description
+    let desc = shot.description;
+    if (useElements && characterElements) {
+      for (const slot of characterElements) {
+        const re = new RegExp(`\\b${slot.characterName}\\b`, 'gi');
+        desc = desc.replace(re, `@Element${slot.elementIndex}`);
+      }
+    }
+    shotParts.push(desc);
 
     if (shot.dialogue) {
       const delivery = shot.dialogue.delivery || 'in character';
@@ -461,11 +456,16 @@ export function buildKlingMultiShotPrompt(
       const voiceDesc = speakingChar?.voiceDescription
         ? ` (voice: ${speakingChar.voiceDescription})`
         : '';
-      shotParts.push(`${shot.dialogue.character}${voiceDesc} says ${delivery}: "${shot.dialogue.line}"`);
+      const charRef = useElements && characterElements
+        ? (characterElements.find(s => s.characterName.toUpperCase() === shot.dialogue!.character.toUpperCase())
+          ? `@Element${characterElements.find(s => s.characterName.toUpperCase() === shot.dialogue!.character.toUpperCase())!.elementIndex}`
+          : shot.dialogue.character)
+        : shot.dialogue.character;
+      shotParts.push(`${charRef}${voiceDesc} says ${delivery}: "${shot.dialogue.line}"`);
     }
 
     if (shot.sfx) {
-      shotParts.push(`Ambient and effects: ${shot.sfx}.`);
+      shotParts.push(`Sound: ${shot.sfx}.`);
     }
 
     parts.push(shotParts.join(' '));
@@ -502,6 +502,8 @@ export function buildKlingMultiShotPrompt(
     model: KLING_MULTISHOT_MODEL,
     duration: unit.duration,
     audio: true,
+    characterElements,
+    referenceImageUrls: useRefs ? [] : undefined,
   };
 }
 
@@ -510,7 +512,7 @@ export function buildCharacterReferencePrompt(
   aesthetic: AestheticProfile,
   angle: 'front' | 'three-quarter' | 'profile' | 'full-body',
 ): string {
-  const baseTraits = char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS;
+  const baseTraits = char.baseTraits ?? (char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS);
 
   const anglePrompts: Record<string, string> = {
     'front': 'front-facing portrait, looking directly at camera, centered, studio lighting, neutral background',
@@ -521,5 +523,5 @@ export function buildCharacterReferencePrompt(
 
   const noLayout = 'single portrait only, no text, no labels, no annotations, no inset panels, no detail callouts, no multi-view layout';
   const aestheticStr = buildAestheticString(aesthetic);
-  return `${char.fullDescription}. ${baseTraits}. ${anglePrompts[angle]}. ${noLayout}. ${aestheticStr}. ${char.wardrobe}.`;
+  return `STYLE: ${aestheticStr}. ${anglePrompts[angle]}. ${char.fullDescription}. ${baseTraits}. ${noLayout}. ${char.wardrobe}. STYLE REMINDER: ${aesthetic.style}, ${aesthetic.filmStock}.`;
 }

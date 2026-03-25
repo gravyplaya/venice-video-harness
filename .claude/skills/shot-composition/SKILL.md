@@ -49,6 +49,41 @@ Plan cinematic shot lists for screenplay scenes, determining shot types, camera 
 - **SMASH CUT**: Abrupt tonal shift
 - **WIPE**: Stylistic, retro, or geographic change
 
+## Format-Specific Patterns
+
+### Talk Show / Interview Format
+Talk shows require frequent cuts between speakers. Each cut is a chance for character drift, so identity anchoring (R2V) takes priority over temporal continuity.
+
+**Shot Pattern:**
+1. **Establishing** (4s, atmosphere model): Empty studio set, audience in shadow, no characters
+2. **Host intro** (8-10s, R2V): Host addresses camera or introduces guest
+3. **Guest dialogue** (8-10s, R2V): Guest speaks, reaction-ready
+4. **Host reaction** (3s, R2V): Silent reaction shot — the comedic beat
+5. **Host response** (8s, R2V): Host delivers counter/punchline
+6. **Two-shot moment** (8s, R2V): Both characters, pivotal exchange
+7. **Guest reaction** (3s, R2V): Reaction to devastating line
+8. **Host close-up** (10s, R2V): Closing monologue to camera
+9. **Title card** (4s, atmosphere model): Empty set, title overlay, fade out
+
+**Rules for this format:**
+- Every shot with characters uses R2V (`kling-o3-standard-reference-to-video`)
+- `mustStaySingle: true` on all shots — never group different speakers
+- Reaction shots (3s, silent) are critical for comedy timing
+- Establishing/title shots have NO characters — use atmosphere model
+- Minimum duration for atmosphere model is **4s** (not 3s)
+- Camera movements: mostly `medium close-up` and `slow zoom in`, with occasional `tracking` for pacing shots
+
+**Transitions:**
+- Use `CUT` between all speaker cuts (clean breaks)
+- Use `FADE` only for opening and closing
+- Never use `DISSOLVE` or `MATCH CUT` between different speakers (implies continuity that doesn't exist)
+
+### Panel Discussion / Multi-Speaker Format
+Similar to talk show but with 3+ speakers. Additional rules:
+- Reaction shots can show multiple listeners
+- Wide shots establish spatial relationships between speakers
+- Each speaker's first appearance must use panel image (not frame chain) for identity anchoring
+
 ## Usage
 ```typescript
 import { planShots } from './storyboard/shot-planner.js';

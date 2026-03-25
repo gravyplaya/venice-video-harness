@@ -1,7 +1,9 @@
 // ---------------------------------------------------------------------------
 // Venice AI API -- TypeScript type definitions
-// Covers image/generate, images/edit, character references, and
-// reference-augmented generation.
+//
+// Covers image/generate, image/multi-edit, image/edit, image/upscale,
+// image/background-remove, video/queue, video/retrieve, video/quote,
+// audio/speech, audio/queue, and character references.
 // ---------------------------------------------------------------------------
 
 // ---- Shared primitives ----------------------------------------------------
@@ -13,213 +15,90 @@ export type InitImageMode = "IMAGE_STRENGTH" | "STEP_SCHEDULE";
 
 /** Request body for the image generation endpoint. */
 export interface ImageGenerateRequest {
-  /** Model identifier (e.g. "nano-banana-2"). */
   model: string;
-
-  /** Text prompt describing the desired image. */
   prompt: string;
-
-  /** Text describing what should be excluded from the image. */
   negative_prompt?: string;
-
-  /** Image resolution: "1K" or "2K". */
   resolution?: string;
-
-  /** Aspect ratio: "1:1", "16:9", "9:16", "4:3", "3:4". */
   aspect_ratio?: string;
-
-  /** Output width in pixels (deprecated -- use resolution + aspect_ratio). */
+  /** @deprecated Use resolution + aspect_ratio instead. */
   width?: number;
-
-  /** Output height in pixels (deprecated -- use resolution + aspect_ratio). */
+  /** @deprecated Use resolution + aspect_ratio instead. */
   height?: number;
-
-  /** Number of diffusion steps. Higher = better quality, slower. */
   steps?: number;
-
-  /** Classifier-free guidance scale. Higher = stricter adherence to prompt. */
   cfg_scale?: number;
-
-  /** Reproducibility seed. Omit for random. */
   seed?: number;
-
-  /** When true the API applies its built-in safety filter. */
   safe_mode?: boolean;
-
-  /** When true the response body is the raw image bytes instead of JSON. */
   return_binary?: boolean;
-
-  /** When true the Venice watermark is suppressed. */
   hide_watermark?: boolean;
-
-  /**
-   * Fidelity to a reference / init image (0-1).
-   * 0 = ignore the reference entirely, 1 = reproduce it almost exactly.
-   */
   fidelity?: number;
-
-  /** Base-64 encoded reference / init image. */
   image?: string;
-
-  /** How `fidelity` is interpreted when a reference image is supplied. */
   init_image_mode?: InitImageMode;
+  format?: 'jpeg' | 'png' | 'webp';
+  variants?: number;
+  style_preset?: string;
+  lora_strength?: number;
+  embed_exif_metadata?: boolean;
+  enable_web_search?: boolean;
 }
 
 /** A single generated image entry returned by the API. */
 export interface GeneratedImage {
-  /** Base-64 encoded PNG/JPEG data. */
   b64_json: string;
-
-  /** Seed that was used for this particular image. */
   seed?: number;
 }
 
 /** Response body from the image generation endpoint (JSON mode). */
 export interface ImageGenerateResponse {
+  id?: string;
   images: GeneratedImage[];
+  timing?: {
+    inferenceDuration: number;
+    inferencePreprocessingTime: number;
+    inferenceQueueTime: number;
+    total: number;
+  };
 }
 
-// ---- POST /api/v1/images/edit ---------------------------------------------
-
-/** Request body for the image editing endpoint. */
-export interface ImageEditRequest {
-  /** Base-64 encoded source image to edit. */
-  image: string;
-
-  /**
-   * Base-64 encoded mask image (white = edit region, black = preserve).
-   * Omit for a full-image edit guided only by `prompt` and `strength`.
-   */
-  mask?: string;
-
-  /** Text prompt describing the desired edit. */
-  prompt: string;
-
-  /**
-   * Edit strength (0-1).
-   * 0 = no change, 1 = completely regenerate the masked region.
-   */
-  strength?: number;
-
-  /** Model identifier. Defaults to the same model used for generation. */
-  model?: string;
-
-  /** Number of diffusion steps. */
-  steps?: number;
-
-  /** Classifier-free guidance scale. */
-  cfg_scale?: number;
-
-  /** Reproducibility seed. */
-  seed?: number;
-
-  /** Apply built-in safety filter. */
-  safe_mode?: boolean;
-}
-
-/** Response body from the image editing endpoint. */
-export interface ImageEditResponse {
-  images: GeneratedImage[];
-}
-
-// ---- Character reference helpers ------------------------------------------
-
-/** A named character with an associated face reference image. */
-export interface CharacterReference {
-  /** Display name used in the prompt (e.g. "MARCUS"). */
-  name: string;
-
-  /** Short role description (e.g. "the detective"). */
-  role: string;
-
-  /** Base-64 encoded face reference image. */
-  base64Image: string;
-}
-
-// ---- Reference-augmented generation ---------------------------------------
+// ---- POST /api/v1/images/edit (DEPRECATED) --------------------------------
 
 /**
- * Extended options for generating an image while injecting character face
- * references into the request.
- *
- * The Venice multi-reference protocol supports up to 14 reference images
- * per request. Slots 1-5 are conventionally reserved for face references;
- * slots 6-14 can carry style, environment, or additional references.
+ * @deprecated Inpainting via /images/edit was disabled May 19, 2025.
+ * Use multi-edit (/image/multi-edit) instead.
  */
-export interface GenerateWithReferencesOptions {
-  /** Text prompt describing the desired scene. */
+export interface ImageEditRequest {
+  image: string;
+  mask?: string;
   prompt: string;
-
-  /** Negative prompt. */
-  negative_prompt?: string;
-
-  /** Image resolution: "1K" or "2K" (default "1K"). */
-  resolution?: string;
-
-  /** Aspect ratio: "1:1", "16:9", "9:16", "4:3", "3:4" (default "1:1"). */
-  aspect_ratio?: string;
-
-  /** Diffusion steps. */
-  steps?: number;
-
-  /** Guidance scale. */
-  cfg_scale?: number;
-
-  /** Reproducibility seed. */
-  seed?: number;
-
-  /** Apply built-in safety filter. */
-  safe_mode?: boolean;
-
-  /** Suppress Venice watermark. */
-  hide_watermark?: boolean;
-
-  /** Model override (default "nano-banana-2"). */
+  strength?: number;
   model?: string;
-
-  /**
-   * Reference images to inject. The first `faceSlots` entries are treated
-   * as face references and receive role-assignment text in the prompt.
-   * Maximum 14 total entries.
-   */
-  referenceImages: CharacterReference[];
-
-  /**
-   * How many of the leading reference images are face references (default 5).
-   * Must be between 0 and 5 inclusive.
-   */
-  faceSlots?: number;
+  steps?: number;
+  cfg_scale?: number;
+  seed?: number;
+  safe_mode?: boolean;
 }
 
-/** Return value from a reference-augmented generation call. */
-export interface GenerateWithReferencesResult {
-  /** Base-64 encoded generated image. */
-  base64: string;
-
-  /** The seed used to produce this image. */
-  seed: number | undefined;
+/** @deprecated */
+export interface ImageEditResponse {
+  images: GeneratedImage[];
 }
 
 // ---- POST /api/v1/image/multi-edit ----------------------------------------
 
 export type MultiEditModel =
-  | 'nano-banana-pro-edit'
-  | 'nano-banana-2-edit'
+  | 'qwen-edit'
+  | 'qwen-image-2-edit'
+  | 'qwen-image-2-pro-edit'
+  | 'flux-2-max-edit'
   | 'gpt-image-1-5-edit'
   | 'grok-imagine-edit'
-  | 'qwen-edit'
-  | 'flux-2-max-edit'
+  | 'nano-banana-2-edit'
+  | 'nano-banana-pro-edit'
   | 'seedream-v4-edit'
   | 'seedream-v5-lite-edit';
 
-/** Request body for the multi-edit endpoint (JSON mode). */
 export interface MultiEditRequest {
-  /** Model ID for multi-edit. */
   modelId: MultiEditModel;
-
-  /** Edit instruction describing what to change. */
   prompt: string;
-
   /**
    * 1-3 images: first is base image, rest are reference layers.
    * Each can be a raw base64 string, data URL, or HTTP URL.
@@ -227,9 +106,170 @@ export interface MultiEditRequest {
   images: string[];
 }
 
+// ---- POST /api/v1/image/upscale -------------------------------------------
+
+export interface ImageUpscaleRequest {
+  model?: string;
+  image: string;
+  scale?: number;
+}
+
+// ---- POST /api/v1/image/background-remove ---------------------------------
+
+export interface BackgroundRemoveRequest {
+  model?: string;
+  image: string;
+}
+
+// ---- POST /api/v1/video/queue ---------------------------------------------
+
+export interface VideoElement {
+  frontal_image_url?: string;
+  reference_image_urls?: string[];
+  video_url?: string;
+}
+
+export interface VideoQueueRequest {
+  model: string;
+  prompt: string;
+  duration: string;
+  image_url?: string;
+  end_image_url?: string;
+  negative_prompt?: string;
+  aspect_ratio?: string;
+  resolution?: string;
+  audio?: boolean;
+  audio_url?: string;
+  video_url?: string;
+  reference_image_urls?: string[];
+  elements?: VideoElement[];
+  scene_image_urls?: string[];
+}
+
+export interface VideoQueueResponse {
+  model: string;
+  queue_id: string;
+}
+
+// ---- POST /api/v1/video/retrieve ------------------------------------------
+
+export interface VideoRetrieveRequest {
+  model: string;
+  queue_id: string;
+  delete_media_on_completion?: boolean;
+}
+
+export interface VideoRetrieveStatus {
+  status: 'PROCESSING';
+  average_execution_time: number;
+  execution_duration: number;
+}
+
+// ---- POST /api/v1/video/quote ---------------------------------------------
+
+export interface VideoQuoteRequest {
+  model: string;
+  duration: string;
+  aspect_ratio?: string | null;
+  resolution?: string;
+  audio?: boolean | null;
+}
+
+export interface VideoQuoteResponse {
+  quote: number;
+}
+
+// ---- POST /api/v1/video/complete ------------------------------------------
+
+export interface VideoCompleteRequest {
+  model: string;
+  queue_id: string;
+}
+
+// ---- POST /api/v1/audio/speech --------------------------------------------
+
+export interface SpeechRequest {
+  input: string;
+  model?: string;
+  voice?: string;
+  response_format?: 'mp3' | 'opus' | 'aac' | 'flac' | 'wav' | 'pcm';
+  speed?: number;
+  streaming?: boolean;
+  /** Qwen3 TTS only: style prompt for emotion/delivery control. */
+  prompt?: string;
+  /** Qwen3 TTS only: language selection. */
+  language?: string;
+  /** Qwen3 TTS only: sampling temperature (0-2). */
+  temperature?: number;
+  /** Qwen3 TTS only: nucleus sampling (0-1). */
+  top_p?: number;
+}
+
+// ---- POST /api/v1/audio/queue ---------------------------------------------
+
+export interface AudioQueueRequest {
+  model: string;
+  prompt: string;
+  lyrics_prompt?: string;
+  duration_seconds?: number | string;
+  force_instrumental?: boolean;
+  voice?: string;
+  language_code?: string;
+  speed?: number;
+}
+
+export interface AudioQueueResponse {
+  model: string;
+  queue_id: string;
+  status: 'QUEUED';
+}
+
+// ---- POST /api/v1/audio/retrieve ------------------------------------------
+
+export interface AudioRetrieveRequest {
+  model: string;
+  queue_id: string;
+  delete_media_on_completion?: boolean;
+}
+
+export interface AudioRetrieveStatus {
+  status: 'PROCESSING';
+  average_execution_time: number;
+  execution_duration: number;
+}
+
+// ---- Character reference helpers ------------------------------------------
+
+export interface CharacterReference {
+  name: string;
+  role: string;
+  base64Image: string;
+}
+
+// ---- Reference-augmented generation ---------------------------------------
+
+export interface GenerateWithReferencesOptions {
+  prompt: string;
+  negative_prompt?: string;
+  resolution?: string;
+  aspect_ratio?: string;
+  steps?: number;
+  cfg_scale?: number;
+  seed?: number;
+  safe_mode?: boolean;
+  hide_watermark?: boolean;
+  model?: string;
+  referenceImages: CharacterReference[];
+  faceSlots?: number;
+}
+
+export interface GenerateWithReferencesResult {
+  base64: string;
+  seed: number | undefined;
+}
+
 // ---- Error envelope -------------------------------------------------------
 
-/** Shape of an error body returned by the Venice API. */
 export interface VeniceApiError {
   error: {
     message: string;

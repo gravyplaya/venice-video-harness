@@ -16,6 +16,8 @@ import {
   MODELS_SUPPORTING_ELEMENTS,
   MODELS_SUPPORTING_REFERENCE_IMAGES,
   MODELS_SUPPORTING_SCENE_IMAGES,
+  MODELS_SUPPORTING_END_IMAGE,
+  MODELS_SUPPORTING_AUDIO_INPUT,
 } from '../series/types.js';
 import {
   buildKlingMultiShotPrompt,
@@ -127,12 +129,12 @@ interface RenderVideoOptions {
   anchorImagePath: string;
   outputPath: string;
   endFrameImagePath?: string;
-  /** Structured elements for character/object references (@Element1, etc.) */
   elements?: VideoElement[];
-  /** Flat array of reference image file paths for character/style consistency */
   referenceImagePaths?: string[];
-  /** Scene reference image file paths for style/environment (@Image1, etc.) */
   sceneImagePaths?: string[];
+  negativePrompt?: string;
+  audioUrl?: string;
+  videoUrl?: string;
 }
 
 function fileToDataUri(filePath: string, mimeType = 'image/png'): string | undefined {
@@ -146,7 +148,8 @@ async function renderVideoFile(
   options: RenderVideoOptions,
 ): Promise<string> {
   const { prompt, anchorImagePath, outputPath, endFrameImagePath,
-    elements, referenceImagePaths, sceneImagePaths } = options;
+    elements, referenceImagePaths, sceneImagePaths,
+    negativePrompt, audioUrl, videoUrl } = options;
   await mkdir(dirname(outputPath), { recursive: true });
 
   const body: Record<string, unknown> = {
@@ -157,16 +160,36 @@ async function renderVideoFile(
     audio: prompt.audio,
   };
 
-  if (endFrameImagePath && existsSync(endFrameImagePath) && prompt.model.includes('kling')) {
+  if (negativePrompt) {
+    body.negative_prompt = negativePrompt;
+  }
+
+  if (endFrameImagePath && existsSync(endFrameImagePath) && MODELS_SUPPORTING_END_IMAGE.has(prompt.model)) {
     body.end_image_url = imageToDataUri(endFrameImagePath);
   }
 
   if (prompt.model.includes('veo')) {
     body.resolution = '720p';
+  } else if (prompt.model.includes('wan-2.6') || prompt.model.includes('wan-2.5')) {
+    body.resolution = '1080p';
+  } else if (prompt.model.includes('ltx-2')) {
+    body.resolution = '1080p';
+  } else if (prompt.model.includes('sora-2-pro')) {
+    body.resolution = '1080p';
+  } else if (prompt.model.includes('sora-2')) {
+    body.resolution = '720p';
   }
 
   if (prompt.model.includes('reference-to-video')) {
     body.aspect_ratio = '9:16';
+  }
+
+  if (audioUrl && MODELS_SUPPORTING_AUDIO_INPUT.has(prompt.model)) {
+    body.audio_url = audioUrl;
+  }
+
+  if (videoUrl) {
+    body.video_url = videoUrl;
   }
 
   if (elements && elements.length > 0 && MODELS_SUPPORTING_ELEMENTS.has(prompt.model)) {
@@ -200,11 +223,11 @@ async function renderVideoFile(
 
   if (sceneImagePaths && sceneImagePaths.length > 0
     && MODELS_SUPPORTING_SCENE_IMAGES.has(prompt.model)) {
-    body.image_urls = sceneImagePaths
+    body.scene_image_urls = sceneImagePaths
       .slice(0, 4)
       .map(p => p.startsWith('data:') ? p : (fileToDataUri(p) ?? p))
       .filter(Boolean);
-    console.log(`  Scene images: ${(body.image_urls as string[]).length}`);
+    console.log(`  Scene images: ${(body.scene_image_urls as string[]).length}`);
   }
 
   console.log(`  Queueing video: model=${prompt.model}, duration=${prompt.duration}, prompt=${(prompt.prompt).length} chars`);
@@ -288,7 +311,7 @@ function resolveCharacterElements(
     && MODELS_SUPPORTING_ELEMENTS.has(prompt.model)) {
     const slots = prompt.characterElements && prompt.characterElements.length > 0
       ? prompt.characterElements
-      : resolvedChars.slice(0, 4).map((char, index) => ({
+      : resolvedChars.slice(0, 2).map((char, index) => ({
         characterName: char.name,
         elementIndex: index + 1,
       }));
@@ -559,27 +582,52 @@ async function renderMultiShotUnit(
   const anchorImagePath = chooseAnchorImagePath(unit, sceneDir, unitOutputPath, previousRenderedShotPath);
   const endFramePath = chooseEndFrameImagePath(unit, sceneDir, nextShotNumber);
 
+  // Resolve elements and references for multi-shot — same identity anchoring as single shots
   const allCharNames = Array.from(new Set(shots.flatMap(s => s.characters)));
-  const anyUseRefs = shots.some(s => s.useReferenceImages);
-  const refPaths = anyUseRefs && MODELS_SUPPORTING_REFERENCE_IMAGES.has(prompt.model)
-    ? allCharNames
-      .map(name => series.characters.find(c => c.name.toUpperCase() === name.toUpperCase()))
-      .filter(Boolean)
+  const resolvedChars = allCharNames
+    .map(name => series.characters.find(c => c.name.toUpperCase() === name.toUpperCase()))
+    .filter(Boolean) as typeof series.characters;
+
+  const charDir = (name: string) =>
+    join(series.outputDir, 'characters', name.toLowerCase());
+
+  let elements: VideoElement[] | undefined;
+  let referenceImagePaths: string[] | undefined;
+
+  if (prompt.characterElements && prompt.characterElements.length > 0
+    && MODELS_SUPPORTING_ELEMENTS.has(prompt.model)) {
+    elements = prompt.characterElements.map(slot => {
+      const dir = charDir(slot.characterName);
+      const frontal = join(dir, 'front.png');
+      const refs = ['three-quarter.png', 'profile.png', 'back.png']
+        .map(f => join(dir, f))
+        .filter(p => existsSync(p))
+        .slice(0, 3);
+      return {
+        frontalImageUrl: existsSync(frontal) ? frontal : undefined,
+        referenceImageUrls: refs.length > 0 ? refs : undefined,
+      };
+    });
+    console.log(`  ${unit.unitId}: elements enabled for ${prompt.characterElements.map(s => s.characterName).join(', ')}`);
+  } else if (MODELS_SUPPORTING_REFERENCE_IMAGES.has(prompt.model) && resolvedChars.length > 0) {
+    referenceImagePaths = resolvedChars
       .flatMap(c => {
-        const dir = join(series.outputDir, 'characters', c!.name.toLowerCase());
+        const dir = charDir(c.name);
         return ['front.png', 'three-quarter.png']
           .map(f => join(dir, f))
           .filter(p => existsSync(p));
       })
-      .slice(0, 4)
-    : undefined;
+      .slice(0, 4);
+    if (referenceImagePaths.length === 0) referenceImagePaths = undefined;
+  }
 
   const savedUnitPath = await renderVideoFile(client, {
     prompt,
     anchorImagePath,
     outputPath: unitOutputPath,
     endFrameImagePath: endFramePath,
-    referenceImagePaths: refPaths && refPaths.length > 0 ? refPaths : undefined,
+    elements,
+    referenceImagePaths,
   });
 
   const segments = splitRenderedUnitIntoShots(savedUnitPath, unit, new Map(shots.map(shot => [shot.shotNumber, shot])), sceneDir);

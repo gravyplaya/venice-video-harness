@@ -1,6 +1,6 @@
 ---
 name: venice-video-model-routing
-description: This skill should be used when generating images or videos via Venice AI, selecting models, attaching reference images, choosing frame sources, or adapting prompts for character consistency. Includes executable Python scripts for image generation, video generation, image editing, and upscaling. Covers decision trees for model upgrades (action/atmosphere to character-consistency tier), elements vs reference_image_urls vs image_urls, frame chaining vs panel start, two-pass image pipeline routing, and prompt adaptation per model. Applicable to any project generating multi-shot video content via the Venice AI API.
+description: This skill should be used when generating images or videos via Venice AI, selecting models, attaching reference images, choosing frame sources, or adapting prompts for character consistency. Includes executable Python scripts for image generation, video generation, image editing, and upscaling. Covers R2V-first model routing (characters present → R2V, no characters → action/atmosphere), elements vs reference_image_urls, frame chaining vs panel start, two-pass image pipeline routing, and prompt adaptation per model. Applicable to any project generating multi-shot video content via the Venice AI API.
 metadata:
   requires:
     bins: ["python3"]
@@ -143,43 +143,36 @@ Use `--quote` with the video script to check pricing before generation.
 
 ---
 
-## 1. Three-Tier Video Model Architecture
+## 1. Video Model Routing: R2V by Default
 
-Venice AI video generation routes through three model tiers based on the shot's role:
+**Core principle: R2V by default, atmosphere model only for empty establishing shots.**
 
-| Tier | Default Model | Role | Capabilities |
-|------|--------------|------|--------------|
-| **Action** | `kling-v3-pro-image-to-video` | Movement, dialogue, fights, gestures | `end_image_url` targeting; durations 3-15s; NO `elements`/`reference_image_urls` |
-| **Atmosphere** | `veo3.1-fast-image-to-video` | Establishing shots, inserts, static mood | 8s only; requires `resolution: '720p'`; NO `elements`/`reference_image_urls` |
-| **Character Consistency** | `kling-o3-standard-reference-to-video` | Identity-critical shots requiring visual anchoring | `elements`, `reference_image_urls`, `image_urls`; durations 3-15s; $0.112/s (no audio), $0.140/s (with audio) |
+Almost all shots should use the R2V (reference-to-video) model — it supports `elements` and `reference_image_urls` for identity anchoring and delivers the best consistency across shots. Non-R2V models have zero reference support. The atmosphere model is reserved only for truly empty establishing/mood shots with no characters or story subjects.
 
-Each shot is tagged with a base role (`"action"` or `"atmosphere"`). The upgrade decision tree (Section 2) determines when to swap from the base tier to the character-consistency tier.
+| Role | Default Model | When Used | Capabilities |
+|------|--------------|-----------|--------------|
+| **Default (all non-establishing)** | `kling-o3-standard-reference-to-video` | All shots with characters or story action | `elements`, `reference_image_urls`, `scene_image_urls`; durations 3-15s |
+| **Establishing / mood only** | `veo3.1-fast-image-to-video` | Empty establishing/mood shots with no characters | 8s only; requires `resolution: '720p'`; NO `elements`/`reference_image_urls` |
 
 Recommended constants:
 
 ```
-ACTION_MODEL              = 'kling-v3-pro-image-to-video'
+ACTION_MODEL              = 'kling-o3-standard-reference-to-video'
 ATMOSPHERE_MODEL          = 'veo3.1-fast-image-to-video'
 CHARACTER_CONSISTENCY_MODEL = 'kling-o3-standard-reference-to-video'
 MULTISHOT_MODEL           = 'kling-o3-pro-image-to-video'
 ```
 
-## 2. Video Model Upgrade Decision Tree
+## 2. Video Model Routing Decision
 
-Evaluate shot characteristics in priority order to determine whether to upgrade from the base model to the character-consistency model. The first matching rule wins:
+The routing is intentionally simple — two paths:
 
 | Priority | Condition | Result | Reason |
 |----------|-----------|--------|--------|
-| 1 | Explicit `useElements` or `useReferenceImages` flag | Consistency model | Explicit opt-in for reference anchoring |
-| 2 | No characters in shot | Base model (no upgrade) | No characters to anchor |
-| 3 | Shot type is `close-up` or `reaction` | Consistency model | Identity-sensitive framing -- face is the whole point |
-| 4 | `continuityPriority === 'identity'` | Consistency model | Shot explicitly requests identity preservation |
-| 5 | Any character in shot not present in previous shot | Consistency model | New character needs reference anchoring |
-| 6 | None of the above | Base model | Default prompt-first generation |
+| 1 | Establishing/mood shot with no characters | Atmosphere model | No characters to anchor — use best visual quality model |
+| 2 | Everything else | R2V model | Identity anchoring via `elements` + `reference_image_urls` — consistency first |
 
-When the consistency model is selected, auto-enable `elements` and `reference_image_urls` if the model supports them (check against the capability matrix in Section 3). No manual flags needed per shot.
-
-See `references/decision-trees.md` for structured ASCII flowcharts.
+When the R2V model is selected, `elements` and `reference_image_urls` are auto-enabled. No manual flags needed per shot.
 
 ## 3. Reference Image Attachment Matrix
 
@@ -213,15 +206,19 @@ Three reference mechanisms exist for video generation, each supported by differe
 
 ### Capability Matrix
 
-| Parameter | Kling O3 R2V (Standard/Pro) | Kling V3 Pro | Vidu Q3 | Veo 3.1 |
-|-----------|:---:|:---:|:---:|:---:|
-| `elements` | Yes | **NO** (400) | No | No |
-| `reference_image_urls` | Yes | **NO** (400) | Yes | No |
-| `image_urls` | Yes | No | No | No |
-| `end_image_url` | Yes | Yes | No | No |
-| `aspect_ratio` | Yes | No | No | No |
+| Parameter | Kling O3 R2V | Kling V3 Pro | Kling 2.6 Pro | Vidu Q3 | Sora 2 | Wan 2.6 | LTX 2.0 | Veo 3.1 | Longcat | PixVerse |
+|-----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `elements` | Yes | **NO** | No | No | No | No | No | No | No | No |
+| `reference_image_urls` | Yes | **NO** | No | Yes | No | No | No | No | No | No |
+| `scene_image_urls` | Yes | No | No | No | No | No | No | No | No | No |
+| `end_image_url` | Yes | Yes | Yes | No | No | No | No | No | No | Transition |
+| `audio_url` | No | No | No | No | No | Yes | No | No | No | No |
+| `aspect_ratio` | Yes | No | No | - | Yes | T2V only | Yes | T2V only | T2V only | Yes |
+| `resolution` | No | No | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Max duration | 15s | 15s | 10s | 16s | 12s | 15s | 20s | 8s | **30s** | 8s |
+| Audio | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes |
 
-Always gate reference attachments through the capability matrix. Sending unsupported params to models that reject them returns 400 errors.
+Always gate reference attachments through the capability matrix. Sending unsupported params to models that reject them returns 400 errors. The model registry in `src/venice/models.ts` has full typed specs for every model.
 
 ## 4. Frame Source Strategy (Identity vs Continuity)
 
@@ -318,11 +315,18 @@ Construct prompts differently depending on the resolved model's capabilities:
 - Structure: camera term first, then description, then dialogue with delivery cues
 - Veo requires `resolution: '720p'`; Kling does NOT accept `resolution`/`aspect_ratio` (derived from input image)
 
-### Multi-Shot Units (Kling O3 Pro)
+### Multi-Shot Units (Kling O3 Pro, up to 6 shots)
 
-- No `elements` or `reference_image_urls` (not supported)
-- Use compact character descriptions
-- Combine all shots in the unit into a single prompt with segment markers
+Kling 3.0 supports up to 6 shots in a single generation (15s max total duration). Multi-shot units now use `elements` and `reference_image_urls` for identity anchoring — same as single shots.
+
+**Prompt structure (Kling 3.0 best practices):**
+1. Define core subjects up front with `[Character: traits]` format and `@Element` refs
+2. State shot count and continuity instruction
+3. Label each shot as `Shot N (Xs):` with cinematic camera direction
+4. Replace character names with `@Element` refs in descriptions
+5. Append compact aesthetic and audio instructions
+
+**Grouping criteria:** Any consecutive shots with overlapping characters, no establishing/insert shots, total duration ≤ 15s. The planner greedily selects the largest valid window (up to 6).
 
 ### Environment Adaptation (All Models)
 
@@ -335,13 +339,40 @@ When a shot is set in a bright daytime environment while the project's default a
 
 This prevents the project's default aesthetic from contaminating scenes with different lighting conditions.
 
-## 7. Anti-Patterns and Learned Routing Failures
+## 7. Format-Specific Routing: Talk Shows, Interviews, Panels
+
+For formats with **frequent speaker cuts** (talk shows, interviews, debate panels, podcasts), temporal continuity between shots matters less than character identity. Apply these overrides:
+
+### All Character Shots Must Be R2V Singles
+
+- **Never group shots with different speakers into multi-shot units.** The Kling multi-shot model (`kling-o3-pro-image-to-video`) does NOT support `elements` or `reference_image_urls` — characters lose all identity anchoring.
+- **Set `mustStaySingle: true`** on all shots in talk show scripts, or ensure the generation planner only groups shots that share the same characters.
+- **Every character shot uses R2V** (`kling-o3-standard-reference-to-video`) with `elements` for frontal reference and `reference_image_urls` for angle coverage.
+
+### Multi-Shot Grouping Rules for These Formats
+
+The `hasOverlappingCharacters` check requires **pairwise character overlap** between consecutive shots. Shots that cut between different speakers (host → guest, speaker A → speaker B) have zero overlap and must be separate.
+
+Valid multi-shot grouping examples:
+- Shot A (Host) → Shot B (Host) → OK, same character
+- Shot A (Host + Guest) → Shot B (Host) → OK, host overlaps
+
+Invalid grouping (now prevented):
+- Shot A (Host only) → Shot B (Guest only) → BLOCKED, no overlap
+- Shot A (Guest A) → Shot B (Guest B) → BLOCKED, no overlap
+
+### Duration Validation
+
+Atmosphere model (`veo3.1-fast-image-to-video`) only accepts **4s, 6s, or 8s**. The video queue function auto-snaps invalid durations to the nearest valid value. When scripting establishing/insert shots, use 4s minimum instead of 3s.
+
+## 8. Anti-Patterns and Learned Routing Failures
 
 ### API Errors
 
-- **Sending `elements`/`reference_image_urls` to Kling V3 Pro:** Returns 400. Always check the capability matrix before attaching reference params.
+- **Sending `elements`/`reference_image_urls` to Kling V3 Pro or Kling O3 Pro (non-R2V):** Returns 400. Only R2V models (`kling-o3-standard-reference-to-video`, `kling-o3-pro-reference-to-video`) support these params.
 - **Sending `resolution`/`aspect_ratio` to Kling image-to-video models:** Returns 400. These are derived from the input image automatically.
 - **Sending `image_references`/`image_1` to `nano-banana-pro`:** Returns 400. The generation model does not accept reference payloads at all.
+- **Sending `duration: "3s"` to Veo 3.1:** Returns 400. Only 4s/6s/8s are valid.
 
 ### Visual Contamination
 
@@ -351,10 +382,17 @@ This prevents the project's default aesthetic from contaminating scenes with dif
 
 ### Identity Failures
 
+- **Grouping different-character shots into multi-shot units:** The Kling multi-shot model has no reference image support. Characters rendered in a multi-shot unit with no `elements` lose identity completely. Always verify pairwise character overlap before grouping.
 - **Frame chaining when new character enters:** The video model invents the new character's appearance from nothing. Always use the panel image (which was refined against character references) as the start frame when a new character appears.
 - **Multi-edit with more than 2 character references:** The multi-edit endpoint accepts max 3 images total (base + 2 refs). Exceeding this drops references silently.
 - **Sequential action in image descriptions:** Causes comic-panel layouts instead of single frames. Separate the single-frame panel description from the full video action description.
 - **Vague body orientation:** Produces twisted poses. Always specify full-body direction explicitly (e.g., "seen entirely from behind", "facing camera directly").
+
+### Style Consistency Failures
+
+- **Aesthetic description buried at end of prompt:** The model commits to a rendering style before reaching the style instructions, causing inconsistency between angles/shots. Always front-load style with a `STYLE:` prefix and add a `STYLE REMINDER:` suffix.
+- **Low cfg_scale for character references:** Using `cfg_scale: 7` gives the model too much freedom, causing style drift between angles (e.g., front is cartoon, profile is photorealistic). Use `cfg_scale: 10` for all character references and storyboard panels.
+- **No anti-realism terms in negative prompt:** Without explicit `photorealistic, photograph, photo` in the negative prompt, stylized/illustration aesthetics drift toward realism on some angles.
 
 ## Troubleshooting
 

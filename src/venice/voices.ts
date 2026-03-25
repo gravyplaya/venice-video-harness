@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// Venice TTS Voice Catalog
+//
+// Covers Kokoro voices (tts-kokoro) and Qwen3 voices (tts-qwen3-0-6b,
+// tts-qwen3-1-7b). Voice IDs are model-specific -- using an incompatible
+// voice returns a 400 error.
+// ---------------------------------------------------------------------------
+
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { VeniceClient } from './client.js';
@@ -12,16 +20,23 @@ export interface VoiceInfo {
   description: string | null;
 }
 
-const KOKORO_VOICES: VoiceInfo[] = buildKokoroVoices();
+export type TTSModel = 'tts-kokoro' | 'tts-qwen3-0-6b' | 'tts-qwen3-1-7b';
 
-export async function listVoices(): Promise<VoiceInfo[]> {
-  return KOKORO_VOICES;
+const KOKORO_VOICES: VoiceInfo[] = buildKokoroVoices();
+const QWEN3_VOICES: VoiceInfo[] = buildQwen3Voices();
+const ALL_VOICES: VoiceInfo[] = [...KOKORO_VOICES, ...QWEN3_VOICES];
+
+export async function listVoices(model?: TTSModel): Promise<VoiceInfo[]> {
+  if (model === 'tts-kokoro') return KOKORO_VOICES;
+  if (model?.startsWith('tts-qwen3')) return QWEN3_VOICES;
+  return ALL_VOICES;
 }
 
 export function filterVoices(
   voices: VoiceInfo[],
   gender?: string,
   age?: string,
+  language?: string,
 ): VoiceInfo[] {
   return voices.filter(v => {
     const labels = v.labels ?? {};
@@ -30,6 +45,9 @@ export function filterVoices(
     }
     if (age && labels.age && labels.age.toLowerCase() !== age.toLowerCase()) {
       return false;
+    }
+    if (language) {
+      return labels.language?.toLowerCase() === language.toLowerCase();
     }
     return labels.language === 'English';
   });
@@ -40,13 +58,14 @@ export async function generateVoiceSample(
   voiceId: string,
   sampleText: string,
   outputPath: string,
+  modelId?: string,
 ): Promise<string> {
   return generateSpeech(
     client,
     {
       voiceId,
       text: sampleText,
-      modelId: DEFAULT_VENICE_TTS_MODEL,
+      modelId: modelId ?? DEFAULT_VENICE_TTS_MODEL,
     },
     outputPath,
   );
@@ -57,6 +76,7 @@ export async function auditionVoices(
   candidateVoices: VoiceInfo[],
   sampleText: string,
   outputDir: string,
+  modelId?: string,
 ): Promise<{ voiceId: string; voiceName: string; samplePath: string }[]> {
   await mkdir(outputDir, { recursive: true });
 
@@ -67,7 +87,7 @@ export async function auditionVoices(
     const samplePath = join(outputDir, `${safeName}-${voice.voice_id.slice(0, 8)}.mp3`);
 
     try {
-      await generateVoiceSample(client, voice.voice_id, sampleText, samplePath);
+      await generateVoiceSample(client, voice.voice_id, sampleText, samplePath, modelId ?? voice.category);
       results.push({
         voiceId: voice.voice_id,
         voiceName: voice.name,
@@ -82,40 +102,85 @@ export async function auditionVoices(
   return results;
 }
 
+// ---- Kokoro voices --------------------------------------------------------
+
 function buildKokoroVoices(): VoiceInfo[] {
   return [
-    ...buildVoiceGroup('American English', 'female', ['af_alloy', 'af_aoede', 'af_bella', 'af_heart', 'af_jadzia', 'af_jessica', 'af_kore', 'af_nicole', 'af_nova', 'af_river', 'af_sarah', 'af_sky']),
-    ...buildVoiceGroup('American English', 'male', ['am_adam', 'am_echo', 'am_eric', 'am_fenrir', 'am_liam', 'am_michael', 'am_onyx', 'am_puck', 'am_santa']),
-    ...buildVoiceGroup('British English', 'female', ['bf_alice', 'bf_emma', 'bf_lily']),
-    ...buildVoiceGroup('British English', 'male', ['bm_daniel', 'bm_fable', 'bm_george', 'bm_lewis']),
-    ...buildVoiceGroup('Spanish', 'female', ['ef_dora']),
-    ...buildVoiceGroup('Spanish', 'male', ['em_alex', 'em_santa']),
-    ...buildVoiceGroup('French', 'female', ['ff_siwis']),
-    ...buildVoiceGroup('Hindi', 'female', ['hf_alpha', 'hf_beta']),
-    ...buildVoiceGroup('Hindi', 'male', ['hm_omega', 'hm_psi']),
-    ...buildVoiceGroup('Italian', 'female', ['if_sara']),
-    ...buildVoiceGroup('Italian', 'male', ['im_nicola']),
-    ...buildVoiceGroup('Japanese', 'female', ['jf_alpha', 'jf_gongitsune', 'jf_nezumi', 'jf_tebukuro']),
-    ...buildVoiceGroup('Japanese', 'male', ['jm_kumo']),
-    ...buildVoiceGroup('Portuguese', 'female', ['pf_dora']),
-    ...buildVoiceGroup('Portuguese', 'male', ['pm_alex', 'pm_santa']),
-    ...buildVoiceGroup('Chinese', 'female', ['zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi']),
-    ...buildVoiceGroup('Chinese', 'male', ['zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang']),
+    ...buildVoiceGroup('tts-kokoro', 'American English', 'female', [
+      'af_alloy', 'af_aoede', 'af_bella', 'af_heart', 'af_jadzia',
+      'af_jessica', 'af_kore', 'af_nicole', 'af_nova', 'af_river',
+      'af_sarah', 'af_sky',
+    ]),
+    ...buildVoiceGroup('tts-kokoro', 'American English', 'male', [
+      'am_adam', 'am_echo', 'am_eric', 'am_fenrir', 'am_liam',
+      'am_michael', 'am_onyx', 'am_puck', 'am_santa',
+    ]),
+    ...buildVoiceGroup('tts-kokoro', 'British English', 'female', ['bf_alice', 'bf_emma', 'bf_lily']),
+    ...buildVoiceGroup('tts-kokoro', 'British English', 'male', ['bm_daniel', 'bm_fable', 'bm_george', 'bm_lewis']),
+    ...buildVoiceGroup('tts-kokoro', 'Spanish', 'female', ['ef_dora']),
+    ...buildVoiceGroup('tts-kokoro', 'Spanish', 'male', ['em_alex', 'em_santa']),
+    ...buildVoiceGroup('tts-kokoro', 'French', 'female', ['ff_siwis']),
+    ...buildVoiceGroup('tts-kokoro', 'Hindi', 'female', ['hf_alpha', 'hf_beta']),
+    ...buildVoiceGroup('tts-kokoro', 'Hindi', 'male', ['hm_omega', 'hm_psi']),
+    ...buildVoiceGroup('tts-kokoro', 'Italian', 'female', ['if_sara']),
+    ...buildVoiceGroup('tts-kokoro', 'Italian', 'male', ['im_nicola']),
+    ...buildVoiceGroup('tts-kokoro', 'Japanese', 'female', ['jf_alpha', 'jf_gongitsune', 'jf_nezumi', 'jf_tebukuro']),
+    ...buildVoiceGroup('tts-kokoro', 'Japanese', 'male', ['jm_kumo']),
+    ...buildVoiceGroup('tts-kokoro', 'Portuguese', 'female', ['pf_dora']),
+    ...buildVoiceGroup('tts-kokoro', 'Portuguese', 'male', ['pm_alex', 'pm_santa']),
+    ...buildVoiceGroup('tts-kokoro', 'Chinese', 'female', ['zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi']),
+    ...buildVoiceGroup('tts-kokoro', 'Chinese', 'male', ['zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang']),
   ];
 }
 
-function buildVoiceGroup(language: string, gender: string, ids: string[]): VoiceInfo[] {
+// ---- Qwen3 voices ---------------------------------------------------------
+
+function buildQwen3Voices(): VoiceInfo[] {
+  return [
+    { voice_id: 'Vivian', name: 'Vivian', category: 'tts-qwen3-1-7b',
+      labels: { gender: 'female', age: 'adult', language: 'English' },
+      preview_url: null, description: 'Female English voice for Qwen3 TTS (supports style prompts)' },
+    { voice_id: 'Serena', name: 'Serena', category: 'tts-qwen3-1-7b',
+      labels: { gender: 'female', age: 'adult', language: 'English' },
+      preview_url: null, description: 'Female English voice for Qwen3 TTS (supports style prompts)' },
+    { voice_id: 'Ono_Anna', name: 'Ono Anna', category: 'tts-qwen3-1-7b',
+      labels: { gender: 'female', age: 'adult', language: 'Japanese' },
+      preview_url: null, description: 'Female Japanese voice for Qwen3 TTS' },
+    { voice_id: 'Sohee', name: 'Sohee', category: 'tts-qwen3-1-7b',
+      labels: { gender: 'female', age: 'adult', language: 'Korean' },
+      preview_url: null, description: 'Female Korean voice for Qwen3 TTS' },
+    { voice_id: 'Uncle_Fu', name: 'Uncle Fu', category: 'tts-qwen3-1-7b',
+      labels: { gender: 'male', age: 'adult', language: 'Chinese' },
+      preview_url: null, description: 'Male Chinese voice for Qwen3 TTS' },
+    { voice_id: 'Dylan', name: 'Dylan', category: 'tts-qwen3-1-7b',
+      labels: { gender: 'male', age: 'adult', language: 'English' },
+      preview_url: null, description: 'Male English voice for Qwen3 TTS (supports style prompts)' },
+    { voice_id: 'Eric', name: 'Eric', category: 'tts-qwen3-1-7b',
+      labels: { gender: 'male', age: 'adult', language: 'English' },
+      preview_url: null, description: 'Male English voice for Qwen3 TTS (supports style prompts)' },
+    { voice_id: 'Ryan', name: 'Ryan', category: 'tts-qwen3-1-7b',
+      labels: { gender: 'male', age: 'adult', language: 'English' },
+      preview_url: null, description: 'Male English voice for Qwen3 TTS (supports style prompts)' },
+    { voice_id: 'Aiden', name: 'Aiden', category: 'tts-qwen3-1-7b',
+      labels: { gender: 'male', age: 'adult', language: 'English' },
+      preview_url: null, description: 'Male English voice for Qwen3 TTS (supports style prompts)' },
+  ];
+}
+
+// ---- Helpers --------------------------------------------------------------
+
+function buildVoiceGroup(model: string, language: string, gender: string, ids: string[]): VoiceInfo[] {
   return ids.map((voiceId) => ({
     voice_id: voiceId,
     name: titleCase(voiceId.split('_')[1] ?? voiceId),
-    category: DEFAULT_VENICE_TTS_MODEL,
+    category: model,
     labels: {
       gender,
       age: 'adult',
       language,
     },
     preview_url: null,
-    description: `${gender} ${language} voice in Venice Kokoro TTS`,
+    description: `${gender} ${language} voice in Venice ${model}`,
   }));
 }
 

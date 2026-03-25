@@ -4,37 +4,25 @@ Structured flowchart versions of the routing logic for Venice AI video and image
 
 ---
 
-## 1. Video Model Upgrade Decision Tree
+## 1. Video Model Selection Decision Tree
 
-Determines whether to upgrade from the base action/atmosphere model to the character-consistency model.
+Determines the video model for a shot. R2V is the default — atmosphere model is only for empty establishing shots.
 
 ```
 INPUT: shot, previousShot
-       baseModel = action or atmosphere model
-       consistencyModel = character-consistency model
+       r2vModel = R2V model (kling-o3-standard-reference-to-video)
+       atmosphereModel = atmosphere model (veo3.1-fast-image-to-video)
 
 START
   |
-  +-- shot.useElements OR shot.useReferenceImages?
-  |   YES -> consistencyModel (explicit opt-in)
+  +-- shot.videoModel === 'atmosphere' AND no characters?
+  |   YES -> atmosphereModel (empty establishing/mood shot)
   |
-  +-- shot has no characters?
-  |   YES -> baseModel (no characters to anchor)
-  |
-  +-- shot.type in {close-up, reaction}?
-  |   YES -> consistencyModel (identity-sensitive framing)
-  |
-  +-- shot.continuityPriority === 'identity'?
-  |   YES -> consistencyModel (identity preservation requested)
-  |
-  +-- any character NOT in previousShot?
-  |   YES -> consistencyModel (new character needs reference anchoring)
-  |
-  +-- none matched
-      -> baseModel (default prompt-first)
+  +-- everything else
+      -> r2vModel (consistency first)
 ```
 
-When `consistencyModel` is selected:
+When `r2vModel` is selected:
 - Auto-enable `elements` if model supports them
 - Auto-enable `reference_image_urls` if model supports them
 
@@ -209,3 +197,67 @@ nano-banana-pro-edit  n/a        up to 2      n/a         n/a      1024x1024
 ```
 
 Legend: Y = supported, X = not supported, (400) = returns HTTP 400 error
+
+---
+
+## 7. Multi-Shot Grouping Decision Tree
+
+Determines whether consecutive shots should be grouped into a single Kling multi-shot unit or rendered as individual R2V singles.
+
+```
+INPUT: window of consecutive shots
+
+START
+  |
+  +-- any shot has mustStaySingle or allowMultiShot === false?
+  |   -> SINGLES (script override blocks grouping)
+  |
+  +-- any shot is establishing, insert, or title card?
+  |   -> SINGLES (these should always render independently)
+  |
+  +-- total duration exceeds 15s?
+  |   -> SINGLES (exceeds Kling multi-shot limit)
+  |
+  +-- do consecutive pairs share at least one character?
+  |   |
+  |   NO -> SINGLES (different characters lose R2V anchoring)
+  |   |
+  |   YES -> GROUP (temporal continuity benefits outweigh)
+  |
+  +-- CRITICAL: for talk shows / interviews / panels:
+      -> PREFER SINGLES (identity anchoring > temporal continuity)
+      -> set mustStaySingle: true on all shots
+
+PAIRWISE OVERLAP CHECK (fixed bug):
+  For shots [A, B, C]:
+    A.characters ∩ B.characters must be non-empty
+    B.characters ∩ C.characters must be non-empty
+  NOT: "each shot has chars in the union pool" (this is the OLD buggy check)
+```
+
+---
+
+## 8. Duration Validation Decision Tree
+
+Validates shot durations against model specs before queuing.
+
+```
+INPUT: model, requestedDuration
+
+START
+  |
+  +-- model has no duration constraints?
+  |   -> USE AS-IS
+  |
+  +-- requestedDuration in model.durations?
+  |   -> USE AS-IS
+  |
+  +-- otherwise
+      -> SNAP to nearest valid duration
+      -> log warning
+
+MODEL DURATION CONSTRAINTS:
+  veo3.1-fast-image-to-video:  4s, 6s, 8s (NO 3s, 5s, 7s)
+  kling-o3-*-reference-to-video: 3s-15s (1s increments)
+  kling-o3-pro-image-to-video:   3s-15s (1s increments)
+```

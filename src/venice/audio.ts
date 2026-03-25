@@ -1,3 +1,7 @@
+// ---------------------------------------------------------------------------
+// Venice Audio API -- TTS, music, sound effects, queued audio generation
+// ---------------------------------------------------------------------------
+
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,16 +11,35 @@ import type { VeniceClient } from './client.js';
 
 const execFileAsync = promisify(execFile);
 
+// ---- Default Models -------------------------------------------------------
+
 export const DEFAULT_VENICE_TTS_MODEL = 'tts-kokoro';
+export const DEFAULT_VENICE_MUSIC_MODEL = 'elevenlabs-music';
+export const DEFAULT_VENICE_SFX_MODEL = 'elevenlabs-sound-effects-v2';
+
+/**
+ * @deprecated Use DEFAULT_VENICE_MUSIC_MODEL or DEFAULT_VENICE_SFX_MODEL.
+ * Kept for backward compatibility with existing scripts.
+ */
 export const DEFAULT_VENICE_AUDIO_MODEL = 'stable-audio-25';
+
+// ---- TTS ------------------------------------------------------------------
 
 export interface TTSOptions {
   voiceId: string;
   text: string;
   modelId?: string;
+  /** Qwen3 TTS style prompt (e.g. "Very happy.", "Sad and slow.") */
   prompt?: string;
   speed?: number;
-  responseFormat?: 'mp3' | 'wav' | 'flac';
+  responseFormat?: 'mp3' | 'wav' | 'flac' | 'aac' | 'opus' | 'pcm';
+  streaming?: boolean;
+  /** Qwen3 TTS only */
+  language?: string;
+  /** Qwen3 TTS only: sampling temperature (0-2) */
+  temperature?: number;
+  /** Qwen3 TTS only: nucleus sampling (0-1) */
+  top_p?: number;
 }
 
 export interface DialogueLine {
@@ -25,42 +48,6 @@ export interface DialogueLine {
   voiceId: string;
   text: string;
   voicePrompt?: string;
-}
-
-export interface SFXOptions {
-  text: string;
-  durationSeconds?: number;
-  modelId?: string;
-}
-
-export interface MusicOptions {
-  prompt: string;
-  durationSeconds?: number;
-  modelId?: string;
-}
-
-interface AudioQueueResponse {
-  model: string;
-  queue_id: string;
-  status: 'QUEUED';
-}
-
-interface AudioRetrieveStatus {
-  status: 'PROCESSING';
-  average_execution_time: number;
-  execution_duration: number;
-}
-
-interface QueuedAudioOptions {
-  prompt: string;
-  modelId?: string;
-  durationSeconds?: number;
-  forceInstrumental?: boolean;
-  voice?: string;
-  languageCode?: string;
-  speed?: number;
-  pollIntervalMs?: number;
-  maxPollAttempts?: number;
 }
 
 export async function generateSpeech(
@@ -75,6 +62,10 @@ export async function generateSpeech(
     prompt,
     speed = 1,
     responseFormat = 'mp3',
+    streaming = false,
+    language,
+    temperature,
+    top_p,
   } = options;
 
   const body: Record<string, unknown> = {
@@ -83,10 +74,20 @@ export async function generateSpeech(
     voice: voiceId,
     response_format: responseFormat,
     speed,
+    streaming,
   };
 
-  if (prompt && modelId.startsWith('tts-qwen3')) {
+  if (prompt && (modelId.startsWith('tts-qwen3') || modelId.startsWith('elevenlabs'))) {
     body.prompt = prompt;
+  }
+  if (language && modelId.startsWith('tts-qwen3')) {
+    body.language = language;
+  }
+  if (temperature !== undefined && modelId.startsWith('tts-qwen3')) {
+    body.temperature = temperature;
+  }
+  if (top_p !== undefined && modelId.startsWith('tts-qwen3')) {
+    body.top_p = top_p;
   }
 
   const audioBuffer = await client.postBinary('/api/v1/audio/speech', body);
@@ -131,6 +132,14 @@ export async function generateDialogueForShots(
   return results;
 }
 
+// ---- Sound Effects --------------------------------------------------------
+
+export interface SFXOptions {
+  text: string;
+  durationSeconds?: number;
+  modelId?: string;
+}
+
 export async function generateSoundEffect(
   client: VeniceClient,
   options: SFXOptions,
@@ -139,14 +148,25 @@ export async function generateSoundEffect(
   const {
     text,
     durationSeconds = 5,
-    modelId = DEFAULT_VENICE_AUDIO_MODEL,
+    modelId = DEFAULT_VENICE_SFX_MODEL,
   } = options;
 
   return generateQueuedAudio(client, {
     prompt: text,
     modelId,
-    durationSeconds: clamp(durationSeconds, 5, 190),
+    durationSeconds: clamp(durationSeconds, 1, 190),
   }, outputPath);
+}
+
+// ---- Music ----------------------------------------------------------------
+
+export interface MusicOptions {
+  prompt: string;
+  durationSeconds?: number;
+  modelId?: string;
+  lyricsPrompt?: string;
+  forceInstrumental?: boolean;
+  voice?: string;
 }
 
 export async function generateMusic(
@@ -157,14 +177,47 @@ export async function generateMusic(
   const {
     prompt,
     durationSeconds = 60,
-    modelId = DEFAULT_VENICE_AUDIO_MODEL,
+    modelId = DEFAULT_VENICE_MUSIC_MODEL,
+    lyricsPrompt,
+    forceInstrumental,
+    voice,
   } = options;
 
   return generateQueuedAudio(client, {
     prompt,
     modelId,
-    durationSeconds: clamp(durationSeconds, 5, 190),
+    durationSeconds: clamp(durationSeconds, 1, 190),
+    lyricsPrompt,
+    forceInstrumental,
+    voice,
   }, outputPath);
+}
+
+// ---- Queued Audio (generic) -----------------------------------------------
+
+interface QueuedAudioOptions {
+  prompt: string;
+  modelId?: string;
+  durationSeconds?: number;
+  forceInstrumental?: boolean;
+  voice?: string;
+  languageCode?: string;
+  speed?: number;
+  lyricsPrompt?: string;
+  pollIntervalMs?: number;
+  maxPollAttempts?: number;
+}
+
+interface AudioQueueResponse {
+  model: string;
+  queue_id: string;
+  status: 'QUEUED';
+}
+
+interface AudioRetrieveStatus {
+  status: 'PROCESSING';
+  average_execution_time: number;
+  execution_duration: number;
 }
 
 export async function generateQueuedAudio(
@@ -174,12 +227,13 @@ export async function generateQueuedAudio(
 ): Promise<string> {
   const {
     prompt,
-    modelId = DEFAULT_VENICE_AUDIO_MODEL,
+    modelId = DEFAULT_VENICE_MUSIC_MODEL,
     durationSeconds,
     forceInstrumental,
     voice,
     languageCode,
     speed,
+    lyricsPrompt,
     pollIntervalMs = 5_000,
     maxPollAttempts = 120,
   } = options;
@@ -203,6 +257,9 @@ export async function generateQueuedAudio(
   }
   if (speed !== undefined) {
     queueBody.speed = speed;
+  }
+  if (lyricsPrompt) {
+    queueBody.lyrics_prompt = lyricsPrompt;
   }
 
   const queued = await client.post<AudioQueueResponse>('/api/v1/audio/queue', queueBody);
@@ -243,6 +300,8 @@ export async function generateQueuedAudio(
   throw new Error(`Timed out waiting for Venice audio generation: ${queued.model} (${queued.queue_id})`);
 }
 
+// ---- Internals ------------------------------------------------------------
+
 async function writeAudioBuffer(
   buffer: Buffer,
   contentType: string,
@@ -276,6 +335,7 @@ function extensionFromContentType(contentType: string): string | null {
   if (contentType.includes('audio/flac')) return '.flac';
   if (contentType.includes('audio/aac')) return '.aac';
   if (contentType.includes('audio/opus')) return '.opus';
+  if (contentType.includes('audio/pcm')) return '.pcm';
   return null;
 }
 
