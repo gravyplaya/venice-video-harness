@@ -16,6 +16,11 @@ import { getCharacterDir } from '../series/manager.js';
  *
  * For 9:16 (768x1376): crops center 576x1024 strip, scales to 768x1376.
  * Veo 3.1 auto-corrects 1:1 input, so atmosphere shots can skip this.
+ *
+ * WARNING: For 16:9 panels (1376x768), the 1:1→16:9 crop removes ~25%
+ * from top and bottom. Close-up face shots lose foreheads and chins.
+ * For close-ups needing forehead detail (logos, sigils), generate the
+ * panel from scratch instead of multi-editing an existing one.
  */
 function getImageDimensions(filePath: string): [number, number] | null {
   const info = execSync(`file "${filePath}"`).toString();
@@ -96,7 +101,8 @@ function buildCharacterFixPrompt(
   }
 
   return (
-    `Make the ${subjectNoun} in the scene match the reference image's FACE AND BODY PROPORTIONS ONLY. ` +
+    `Make the ${subjectNoun} in the scene match the reference images' FACE AND BODY PROPORTIONS ONLY. ` +
+    `Image 2 is the front-facing reference, Image 3 (if present) is the three-quarter reference — use both to accurately reconstruct the face, hair, and jaw. ` +
     `Character: ${char.name}. ${traits}. ${char.fullDescription}. ` +
     `Wearing: ${wardrobe}. ` +
     (wardrobeOverride
@@ -168,11 +174,21 @@ export async function fixPanel(
 
   const charRefs: string[] = [];
   for (const char of chars.slice(0, 2)) {
-    const frontPath = join(getCharacterDir(series, char.name), 'front.png');
+    const charDir = getCharacterDir(series, char.name);
+    const frontPath = join(charDir, 'front.png');
     if (!existsSync(frontPath)) {
       throw new Error(`Reference image not found for ${char.name}: ${frontPath}`);
     }
     charRefs.push(await loadImageAsDataUri(frontPath));
+    // For single-character shots, use a second angle for stronger identity anchoring.
+    // multi-edit accepts up to 3 images total (base + 2 refs), so this slot is free
+    // when there is only one character.
+    if (chars.length === 1) {
+      const threeQuarterPath = join(charDir, 'three-quarter.png');
+      if (existsSync(threeQuarterPath)) {
+        charRefs.push(await loadImageAsDataUri(threeQuarterPath));
+      }
+    }
   }
 
   let prompt: string;
@@ -182,6 +198,12 @@ export async function fixPanel(
     prompt = buildCharacterFixPrompt(chars[0], episodeWardrobe?.[chars[0].name.toUpperCase()], environment);
   } else {
     prompt = buildTwoCharacterFixPrompt(chars[0], chars[1], episodeWardrobe, environment);
+  }
+
+  // Warn about 16:9 close-ups losing forehead/chin after 1:1→16:9 crop
+  if (origW > origH && origW / origH > 1.5) {
+    console.warn('  ⚠ Multi-editing a 16:9 panel — the 1:1→16:9 crop will remove ~25% from top/bottom.');
+    console.warn('    Close-up face shots may lose foreheads. Consider generating from scratch instead.');
   }
 
   console.log(`  Multi-editing panel with ${chars.length} character reference(s)...`);

@@ -193,25 +193,31 @@ export function buildImagePrompt(
   parts.push(`STYLE: ${aestheticStr}.`);
   parts.push('Single cinematic frame, one continuous image, NOT a comic panel layout, NO panel borders, NO speech bubbles, NO text overlays.');
 
-  const portraitTypes = new Set(['close-up', 'reaction']);
-  const isPortrait = portraitTypes.has(shot.type);
   const isEmptyScene = shot.characters.length === 0;
-  const isSingleCharAction = !isPortrait && !isEmptyScene && shot.characters.length === 1
-    && (shot.type === 'action' || shot.type === 'dialogue' || shot.type === 'establishing');
 
-  if (!isPortrait) {
-    parts.push('Characters are engaged in the scene, NOT looking at the camera.');
-  }
+  parts.push('Characters are engaged in the scene, NOT looking at the camera.');
 
-  if (isSingleCharAction) {
-    parts.push('This is NOT a portrait or headshot. The environment, props, and action are equally important as the character. Show the full scene composition.');
+  if (!isEmptyScene && shot.characters.length === 1) {
+    parts.push('This is NOT a portrait or headshot. The environment, props, and action are equally important as the character. Show the full scene composition with widescreen cinematic framing.');
   }
 
   parts.push(`Camera: ${shot.cameraMovement}.`);
   parts.push(shot.panelDescription ?? shot.description);
 
-  if (isEmptyScene) {
+  // Silhouette characters appear in the panel but don't trigger R2V
+  if (shot.silhouetteCharacters && shot.silhouetteCharacters.length > 0) {
+    for (const charName of shot.silhouetteCharacters) {
+      const char = series.characters.find(c => c.name.toUpperCase() === charName.toUpperCase());
+      if (char) {
+        parts.push(`A distant silhouetted figure (${char.name}) is visible — seen from behind or at a distance, no face detail needed, identifiable by wardrobe: ${char.wardrobe}.`);
+      }
+    }
+  }
+
+  if (isEmptyScene && (!shot.silhouetteCharacters || shot.silhouetteCharacters.length === 0)) {
     parts.push('Empty environment, no people present, no human figures, uninhabited scene.');
+  } else if (isEmptyScene) {
+    // Has silhouette characters but no main characters — don't add "no people" directive
   } else {
     for (const charName of shot.characters) {
       const char = series.characters.find(c => c.name.toUpperCase() === charName.toUpperCase());
@@ -227,7 +233,8 @@ export function buildImagePrompt(
 
   const seed = series.aestheticSeed ?? undefined;
 
-  let negativePrompt = isEmptyScene ? NO_PEOPLE_NEGATIVE : NEGATIVE_PROMPT;
+  const hasSilhouettes = shot.silhouetteCharacters && shot.silhouetteCharacters.length > 0;
+  let negativePrompt = (isEmptyScene && !hasSilhouettes) ? NO_PEOPLE_NEGATIVE : NEGATIVE_PROMPT;
   if (isDaytime) {
     negativePrompt += ', rain, rain streaks, wet surfaces, wet pavement, dark sky, storm, night sky, outdoor rain, neon reflections on wet ground';
   }
@@ -329,17 +336,17 @@ export function buildVideoPrompt(
     const speakingChar = series.characters.find(
       c => c.name.toUpperCase() === shot.dialogue!.character.toUpperCase(),
     );
-    const voiceDesc = speakingChar?.voiceDescription
-      ? ` (voice: ${speakingChar.voiceDescription})`
-      : '';
-    const delivery = shot.dialogue.delivery || 'in character';
+    const voiceDesc = speakingChar?.voiceDescription ?? '';
+    const delivery = shot.dialogue.delivery || '';
     const charRef = useElements && characterElements
       ? (characterElements.find(s => s.characterName.toUpperCase() === shot.dialogue!.character.toUpperCase())
         ? `@Element${characterElements.find(s => s.characterName.toUpperCase() === shot.dialogue!.character.toUpperCase())!.elementIndex}`
         : shot.dialogue.character)
       : shot.dialogue.character;
 
-    parts.push(`${charRef}${voiceDesc} says ${delivery}: "${shot.dialogue.line}"`);
+    // Kling 3.0 dialogue format: [Character, voice description]: "line"
+    const voiceParts = [voiceDesc, delivery].filter(Boolean).join(', ');
+    parts.push(`[${charRef}, ${voiceParts}]: "${shot.dialogue.line}"`);
   }
 
   if (shot.sfx) {
@@ -411,34 +418,38 @@ export function buildKlingMultiShotPrompt(
     }
   }
 
-  // --- Kling 3.0 multi-shot prompt structure ---
-  // 1. Define core subjects up front with consistent labels
-  // 2. Label each shot as a distinct unit with cinematic direction
-  // 3. Describe camera relationship to subjects explicitly
-  // 4. Use @Element refs for identity anchoring when supported
+  // --- Kling 3.0 native multi-shot prompt structure ---
+  // Per https://blog.fal.ai/kling-3-0-prompting-guide/:
+  // 1. Define core subjects up front with @Element refs and traits
+  // 2. State shot count and continuity instruction
+  // 3. Label each shot as "Shot N (Xs):" with cinematic direction
+  // 4. Use [Character, voice description]: "dialogue" format
+  // 5. Use "Immediately," between shots for temporal control
+  // 6. Append compact aesthetic and audio instructions
 
   const parts: string[] = [];
 
-  // Core subjects block — define once, reference consistently
+  // Subject definition block — Kling 3.0 locks these across all shots
   if (uniqueCharacters.length > 0) {
-    parts.push(`Subjects: ${uniqueCharacters.map(char => {
+    for (const char of uniqueCharacters) {
       const slot = characterElements?.find(s => s.characterName.toUpperCase() === char.name.toUpperCase());
-      return summarizeCharacterForMultiShot(char, wardrobeByChar.get(char.name.toUpperCase()), slot);
-    }).join(' ')}`);
+      const wardrobe = wardrobeByChar.get(char.name.toUpperCase()) ?? char.wardrobe;
+      const baseTraits = char.baseTraits ?? (char.gender === 'female' ? FEMALE_BASE_TRAITS : MALE_BASE_TRAITS);
+      const label = slot ? `@Element${slot.elementIndex}` : char.name;
+      parts.push(`${label} is ${char.name}: ${char.age}, ${baseTraits}, ${char.description}. Wearing ${wardrobe}.`);
+    }
   }
 
-  parts.push(`${shots.length}-shot continuous sequence. Lock faces, wardrobe, and environment across all shots.`);
+  parts.push(`\n${shots.length}-shot continuous sequence. Lock face, wardrobe, and environment across all shots.\n`);
 
-  // Per-shot blocks — cinematic direction, not object lists
+  // Per-shot blocks with Kling 3.0 dialogue format
   for (let index = 0; index < shots.length; index++) {
     const shot = shots[index];
     const cameraTerm = CAMERA_TERMS[shot.cameraMovement.toLowerCase()] ?? shot.cameraMovement;
     const shotParts: string[] = [];
 
-    shotParts.push(`Shot ${index + 1} (${parseShotDuration(shot.duration)}s):`);
-    shotParts.push(`${cameraTerm}.`);
+    shotParts.push(`Shot ${index + 1} (${parseShotDuration(shot.duration)}s): ${cameraTerm}.`);
 
-    // Replace character names with @Element refs in description
     let desc = shot.description;
     if (useElements && characterElements) {
       for (const slot of characterElements) {
@@ -448,27 +459,33 @@ export function buildKlingMultiShotPrompt(
     }
     shotParts.push(desc);
 
+    // Kling 3.0 dialogue format: [Character, voice description]: "line"
     if (shot.dialogue) {
-      const delivery = shot.dialogue.delivery || 'in character';
       const speakingChar = series.characters.find(
         c => c.name.toUpperCase() === shot.dialogue!.character.toUpperCase(),
       );
-      const voiceDesc = speakingChar?.voiceDescription
-        ? ` (voice: ${speakingChar.voiceDescription})`
-        : '';
+      const voiceDesc = speakingChar?.voiceDescription ?? '';
+      const delivery = shot.dialogue.delivery || '';
       const charRef = useElements && characterElements
         ? (characterElements.find(s => s.characterName.toUpperCase() === shot.dialogue!.character.toUpperCase())
           ? `@Element${characterElements.find(s => s.characterName.toUpperCase() === shot.dialogue!.character.toUpperCase())!.elementIndex}`
           : shot.dialogue.character)
         : shot.dialogue.character;
-      shotParts.push(`${charRef}${voiceDesc} says ${delivery}: "${shot.dialogue.line}"`);
+
+      const voiceParts = [voiceDesc, delivery].filter(Boolean).join(', ');
+      shotParts.push(`[${charRef}, ${voiceParts}]: "${shot.dialogue.line}"`);
     }
 
     if (shot.sfx) {
       shotParts.push(`Sound: ${shot.sfx}.`);
     }
 
-    parts.push(shotParts.join(' '));
+    parts.push(shotParts.join('\n'));
+
+    // Temporal separator between shots
+    if (index < shots.length - 1) {
+      parts.push('\nImmediately, cut to:\n');
+    }
   }
 
   const anyDaytime = shots.some(s => isDaytimeShot(s));

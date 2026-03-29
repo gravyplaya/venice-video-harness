@@ -315,16 +315,41 @@ Construct prompts differently depending on the resolved model's capabilities:
 - Structure: camera term first, then description, then dialogue with delivery cues
 - Veo requires `resolution: '720p'`; Kling does NOT accept `resolution`/`aspect_ratio` (derived from input image)
 
-### Multi-Shot Units (Kling O3 Pro, up to 6 shots)
+### Native Multi-Shot (Kling 3.0, up to 6 shots, 15s max)
 
-Kling 3.0 supports up to 6 shots in a single generation (15s max total duration). Multi-shot units now use `elements` and `reference_image_urls` for identity anchoring — same as single shots.
+Kling 3.0 supports native multi-shot generation — a single prompt produces a single video with multiple distinct shots and automatic cuts between them. This works with the R2V model (`kling-o3-standard-reference-to-video`) which supports `elements` for identity anchoring across all shots.
 
-**Prompt structure (Kling 3.0 best practices):**
-1. Define core subjects up front with `[Character: traits]` format and `@Element` refs
-2. State shot count and continuity instruction
-3. Label each shot as `Shot N (Xs):` with cinematic camera direction
-4. Replace character names with `@Element` refs in descriptions
-5. Append compact aesthetic and audio instructions
+**Prompt structure (per [Kling 3.0 Prompting Guide](https://blog.fal.ai/kling-3-0-prompting-guide/)):**
+1. **Define subjects up front** with `@Element` refs and traits — Kling locks these across all shots
+2. **State shot count and continuity instruction**: `"N-shot continuous sequence. Lock face, wardrobe, and environment across all shots."`
+3. **Label each shot** as `Shot N (Xs):` with cinematic camera direction
+4. **Dialogue format**: `[@Element1, voice description, delivery]: "dialogue line"` — bind dialogue to character actions
+5. **Temporal separators**: `Immediately, cut to:` between shots for hard cuts
+6. **Compact aesthetic** at the end — keep under 2500 chars total
+
+**Example (2-shot dialogue with cut):**
+```
+@Element1 is SeehRov Kire: early 40s, lean, sandy-brown hair, pale blue-grey eyes.
+Wearing ochre-sand linen overcoat, leather chest harness.
+
+2-shot continuous sequence. Lock face, wardrobe across both shots.
+
+Shot 1 (7s): Wide shot at a stone entrance.
+@Element1 stands in the threshold facing the desert.
+[@Element1, low measured baritone, quietly intense]: "I wrote the code that created a deity."
+Sound of desert wind.
+
+Immediately, cut to:
+
+Shot 2 (6s): Extreme close-up on @Element1's face.
+Golden amber sunlight from the side.
+[@Element1, low measured baritone, voice hardening]: "Now I push the commit that destroys one."
+```
+
+**Key advantages over concatenated singles:**
+- **Consistent identity** across the cut (same generation maintains character appearance)
+- **Native audio continuity** (ambient sound and dialogue flow naturally)
+- **Single API call** instead of multiple queue/poll cycles
 
 **Grouping criteria:** Any consecutive shots with overlapping characters, no establishing/insert shots, total duration ≤ 15s. The planner greedily selects the largest valid window (up to 6).
 
@@ -371,8 +396,10 @@ Atmosphere model (`veo3.1-fast-image-to-video`) only accepts **4s, 6s, or 8s**. 
 
 - **Sending `elements`/`reference_image_urls` to Kling V3 Pro or Kling O3 Pro (non-R2V):** Returns 400. Only R2V models (`kling-o3-standard-reference-to-video`, `kling-o3-pro-reference-to-video`) support these params.
 - **Sending `resolution`/`aspect_ratio` to Kling image-to-video models:** Returns 400. These are derived from the input image automatically.
+- **Omitting `aspect_ratio` from R2V models:** The R2V model (`kling-o3-standard-reference-to-video`) **requires** `aspect_ratio`. If omitted, it defaults to `16:9` in code but the API may reject it. Always pass `aspect_ratio: '16:9'` (or `'9:16'`) explicitly.
 - **Sending `image_references`/`image_1` to `nano-banana-pro`:** Returns 400. The generation model does not accept reference payloads at all.
 - **Sending `duration: "3s"` to Veo 3.1:** Returns 400. Only 4s/6s/8s are valid.
+- **Reference images below 300x300:** R2V models reject `reference_image_urls` and `elements` images smaller than 300x300 pixels. Never downscale character references below this threshold.
 
 ### Visual Contamination
 
@@ -393,6 +420,13 @@ Atmosphere model (`veo3.1-fast-image-to-video`) only accepts **4s, 6s, or 8s**. 
 - **Aesthetic description buried at end of prompt:** The model commits to a rendering style before reaching the style instructions, causing inconsistency between angles/shots. Always front-load style with a `STYLE:` prefix and add a `STYLE REMINDER:` suffix.
 - **Low cfg_scale for character references:** Using `cfg_scale: 7` gives the model too much freedom, causing style drift between angles (e.g., front is cartoon, profile is photorealistic). Use `cfg_scale: 10` for all character references and storyboard panels.
 - **No anti-realism terms in negative prompt:** Without explicit `photorealistic, photograph, photo` in the negative prompt, stylized/illustration aesthetics drift toward realism on some angles.
+- **Lighting mismatch between consecutive shots in same location:** Each panel generated independently can produce wildly different lighting for the same environment. Style-match later panels against earlier ones using multi-edit, or explicitly describe the established lighting.
+
+### Multi-Edit Pitfalls
+
+- **Multi-editing 16:9 close-ups destroys foreheads:** Multi-edit returns 1024x1024. Cropping to 16:9 removes ~25% from top and bottom. Close-up face shots lose foreheads and chins. For close-ups needing forehead detail (logos, headwear), generate from scratch with `nano-banana-pro` instead.
+- **Establishing shots with silhouetted figures treated as empty:** Shots with `characters: []` trigger "no people" negative prompts, preventing silhouettes from appearing. Use `silhouetteCharacters` in the shot script for distant/back-turned figures that don't need R2V.
+- **Logo/sigil descriptions misinterpreted:** Shorthand like "triple-V" or "VVV" produces random V-shapes. Always describe the actual geometric design (e.g., "two ornate skeleton keys crossed in an X with a chevron/book at top") or use the logo image file as a multi-edit reference.
 
 ## Troubleshooting
 

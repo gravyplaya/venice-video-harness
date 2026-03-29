@@ -617,7 +617,7 @@ export function buildModelParams(modelId: string, opts: {
       params.aspect_ratio = opts.aspectRatio;
     }
   } else if (model.type === 'image-to-video' && model.id.includes('reference-to-video') && model.aspectRatios.length > 0) {
-    params.aspect_ratio = opts.aspectRatio ?? '9:16';
+    params.aspect_ratio = opts.aspectRatio ?? '16:9';
   }
 
   if (opts.endImageUrl && model.supportsEndImage) {

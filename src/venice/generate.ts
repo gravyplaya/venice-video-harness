@@ -162,18 +162,24 @@ export async function generateWithReferences(
 
   // ---- Call API -----------------------------------------------------------
 
-  const response = await client.post<ImageGenerateResponse>(
+  const raw = await client.post<Record<string, unknown>>(
     GENERATE_PATH,
     body as unknown as Record<string, unknown>,
   );
 
-  const firstImage = response.images[0];
+  // Venice may return images as raw base64 strings or as { b64_json } objects.
+  const rawImages = (raw as { images?: unknown[] }).images ?? [];
+  const firstImage = rawImages[0];
   if (!firstImage) {
     throw new Error("Venice API returned an empty images array.");
   }
 
-  return {
-    base64: firstImage.b64_json,
-    seed: firstImage.seed,
-  };
+  const b64 = typeof firstImage === "string"
+    ? firstImage
+    : (firstImage as { b64_json: string; seed?: number }).b64_json;
+  const resultSeed = typeof firstImage === "object"
+    ? (firstImage as { seed?: number }).seed
+    : undefined;
+
+  return { base64: b64, seed: resultSeed };
 }

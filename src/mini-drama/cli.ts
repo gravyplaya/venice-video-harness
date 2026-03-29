@@ -3,7 +3,7 @@
 import 'dotenv/config';
 import { Command } from 'commander';
 import { resolve, join } from 'node:path';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile, copyFile, unlink } from 'node:fs/promises';
 
 import {
@@ -34,7 +34,7 @@ import {
 } from '../series/types.js';
 import type { AestheticProfile } from '../storyboard/prompt-builder.js';
 import { VeniceClient } from '../venice/client.js';
-import { generateImage } from '../venice/generate.js';
+import { generateImage, generateWithReferences } from '../venice/generate.js';
 import { getVeniceApiKey } from '../config.js';
 import { listVoices, filterVoices, auditionVoices } from '../venice/voices.js';
 import { generateDialogueForShots, generateSoundEffect, generateMusic } from '../venice/audio.js';
@@ -44,6 +44,7 @@ import { buildImagePrompt, buildCharacterReferencePrompt } from './prompt-builde
 import { generateEpisodeVideos } from './video-generator.js';
 import { generateSubtitles, saveSrt } from './subtitle-generator.js';
 import { fixPanel, refineWithReferences, refineStyleConsistency } from './panel-fixer.js';
+import { multiEditImage, loadImageAsDataUri } from '../venice/multi-edit.js';
 import type { MultiEditModel } from '../venice/types.js';
 import { assembleEpisode, collectShotVideos } from './assembler.js';
 import { buildGenerationPlan, saveGenerationPlan } from './generation-planner.js';
@@ -597,7 +598,8 @@ program
   .option('--cfg-scale <number>', 'Prompt adherence (1-10, higher = stricter)', parseFloat)
   .option('--debug', 'Save prompt payloads as shot-NNN.prompt.json for debugging', false)
   .option('--skip-approval', 'Skip script approval check', false)
-  .action(async (opts: { project: string; episode: number; refine: boolean; editModel: string; cfgScale?: number; debug: boolean; skipApproval: boolean }) => {
+  .option('--force', 'Regenerate all panels, ignoring any that already exist', false)
+  .action(async (opts: { project: string; episode: number; refine: boolean; editModel: string; cfgScale?: number; debug: boolean; skipApproval: boolean; force: boolean }) => {
     const series = await loadSeries(resolve(opts.project));
     if (!series) { console.error('Series not found.'); process.exit(1); }
 
@@ -641,10 +643,17 @@ program
       const imgPath = join(sceneDir, `shot-${shotNum}.png`);
       const progress = `[${shotIdx + 1}/${totalShots}]`;
 
-      if (existsSync(imgPath)) {
+      if (existsSync(imgPath) && !opts.force) {
         skippedCount++;
         console.log(`  ${progress} Shot ${shotNum}: already exists, skipping`);
         continue;
+      }
+
+      // Archive existing panel before overwriting (--force mode)
+      if (existsSync(imgPath) && opts.force) {
+        const archivePath = imgPath.replace(/\.png$/, `-force-archive-${Date.now()}.png`);
+        const { rename: renameFile } = await import('node:fs/promises');
+        await renameFile(imgPath, archivePath);
       }
 
       const imagePrompt = buildImagePrompt(shot, series);
@@ -666,20 +675,72 @@ program
       const shotStart = Date.now();
 
       try {
-        const response = await generateImage(client, {
-          prompt: imagePrompt.prompt,
-          negative_prompt: imagePrompt.negativePrompt,
-          resolution: '1K',
-          aspect_ratio: '9:16',
-          steps: 30,
-          cfg_scale: cfgScale,
-          seed: imagePrompt.seed,
-          safe_mode: false,
-          hide_watermark: true,
-        });
+        const storyboardAR = series.storyboardAspectRatio ?? '16:9';
+        let imgBuffer: Buffer;
 
-        if (response.images?.[0]) {
-          const imgBuffer = Buffer.from(response.images[0].b64_json, 'base64');
+        // For character shots, use generateWithReferences for identity anchoring
+        const hasChars = shot.characters && shot.characters.length > 0;
+        if (hasChars) {
+          const charRefs = shot.characters
+            .map(name => {
+              const char = series.characters.find(c => c.name.toUpperCase() === name.toUpperCase());
+              if (!char) return null;
+              const charDir = getCharacterDir(series, char.name);
+              const frontPath = join(charDir, 'front.png');
+              if (!existsSync(frontPath)) return null;
+              return {
+                name: char.name,
+                role: char.description.slice(0, 80),
+                base64Image: readFileSync(frontPath).toString('base64'),
+              };
+            })
+            .filter(Boolean) as import('../venice/types.js').CharacterReference[];
+
+          if (charRefs.length > 0) {
+            const result = await generateWithReferences(client, {
+              prompt: imagePrompt.prompt,
+              negative_prompt: imagePrompt.negativePrompt,
+              resolution: '1K',
+              aspect_ratio: storyboardAR,
+              steps: 30,
+              cfg_scale: cfgScale,
+              seed: imagePrompt.seed,
+              safe_mode: false,
+              hide_watermark: true,
+              referenceImages: charRefs,
+              faceSlots: Math.min(charRefs.length, 2),
+            });
+            imgBuffer = Buffer.from(result.base64, 'base64');
+          } else {
+            const response = await generateImage(client, {
+              prompt: imagePrompt.prompt,
+              negative_prompt: imagePrompt.negativePrompt,
+              resolution: '1K',
+              aspect_ratio: storyboardAR,
+              steps: 30,
+              cfg_scale: cfgScale,
+              seed: imagePrompt.seed,
+              safe_mode: false,
+              hide_watermark: true,
+            });
+            imgBuffer = Buffer.from(response.images[0].b64_json, 'base64');
+          }
+        } else {
+          const response = await generateImage(client, {
+            prompt: imagePrompt.prompt,
+            negative_prompt: imagePrompt.negativePrompt,
+            resolution: '1K',
+            aspect_ratio: storyboardAR,
+            steps: 30,
+            cfg_scale: cfgScale,
+            seed: imagePrompt.seed,
+            safe_mode: false,
+            hide_watermark: true,
+          });
+          imgBuffer = Buffer.from(response.images[0].b64_json, 'base64');
+        }
+
+        if (imgBuffer) {
           await writeFile(imgPath, imgBuffer);
 
           // Venice returns WebP internally disguised as PNG -- convert immediately
@@ -807,6 +868,79 @@ program
       if (styleAnchorPath && existsSync(styleAnchorPath)) {
         await unlink(styleAnchorPath);
       }
+    }
+
+    // ── Pass 3: Scene-ref injection for shots with sceneImagePaths ────────
+    // buildImagePrompt() is text-only and cannot embed reference images.
+    // For shots that have sceneImagePaths (e.g. Venice logo on the monolith),
+    // we run a dedicated multi-edit pass that injects the logo/scene image
+    // as a reference so the model visually integrates it into the panel.
+    const scenePropShots = script.shots.filter(
+      s => s.sceneImagePaths && s.sceneImagePaths.length > 0,
+    );
+
+    if (scenePropShots.length > 0) {
+      const sceneEditModel = opts.editModel as MultiEditModel;
+      console.log(`\nPass 3: Injecting scene references into ${scenePropShots.length} shots...`);
+      const pass3Start = Date.now();
+
+      for (let idx = 0; idx < scenePropShots.length; idx++) {
+        const shot = scenePropShots[idx];
+        const shotNum = String(shot.shotNumber).padStart(3, '0');
+        const imgPath = join(sceneDir, `shot-${shotNum}.png`);
+        const progress = `[${idx + 1}/${scenePropShots.length}]`;
+        if (!existsSync(imgPath)) {
+          console.log(`  ${progress} Shot ${shotNum}: panel missing, skipping`);
+          continue;
+        }
+
+        // Load all scene ref images that actually exist on disk
+        const sceneRefUris: string[] = [];
+        for (const refPath of shot.sceneImagePaths!.slice(0, 2)) {
+          if (existsSync(refPath)) {
+            sceneRefUris.push(await loadImageAsDataUri(refPath));
+          } else {
+            console.warn(`  ${progress} Shot ${shotNum}: scene ref not found: ${refPath}`);
+          }
+        }
+        if (sceneRefUris.length === 0) {
+          console.log(`  ${progress} Shot ${shotNum}: no valid scene refs, skipping`);
+          continue;
+        }
+
+        const panelDataUri = await loadImageAsDataUri(imgPath);
+        const defaultSceneRefPrompt =
+          `Integrate the visual elements from the reference image(s) into this scene. ` +
+          `Preserve the scene composition, characters, lighting, and cinematic framing exactly. ` +
+          `Do not change the overall image. Do not add text, speech bubbles, or panel borders.`;
+        const sceneRefPrompt = shot.sceneRefDescription
+          ? `${shot.sceneRefDescription} Preserve the scene composition, characters, lighting, and cinematic framing exactly. Do not add text, speech bubbles, or panel borders.`
+          : defaultSceneRefPrompt;
+
+        const refStart = Date.now();
+        try {
+          const resultBuffer = await multiEditImage(client, {
+            model: sceneEditModel,
+            prompt: sceneRefPrompt,
+            baseImage: panelDataUri,
+            referenceImages: sceneRefUris,
+          });
+          // Archive original before overwriting
+          const archivePath = imgPath.replace(/\.png$/, '-pre-scene-ref.png');
+          if (existsSync(imgPath)) {
+            const { rename } = await import('node:fs/promises');
+            await rename(imgPath, archivePath);
+          }
+          await writeFile(imgPath, resultBuffer);
+          const elapsed = ((Date.now() - refStart) / 1000).toFixed(1);
+          console.log(`  ${progress} Shot ${shotNum}: scene-ref injected (${elapsed}s)`);
+        } catch (err) {
+          console.warn(`  ${progress} Shot ${shotNum}: scene-ref injection FAILED - ${err}`);
+        }
+      }
+
+      const pass3Elapsed = ((Date.now() - pass3Start) / 1000).toFixed(0);
+      console.log(`\nPass 3 complete (${pass3Elapsed}s total)`);
     }
 
     const ep = series.episodes.find(e => e.number === opts.episode);
@@ -1407,6 +1541,118 @@ program
       console.log(`Validation PASSED — no issues found.`);
     } else {
       console.log(`Validation found ${issues} issue(s). Fix before proceeding.`);
+    }
+  });
+
+// ── validate-video-outputs ────────────────────────────────────────────
+program
+  .command('validate-video-outputs')
+  .description('Post-generation QA: check aspect ratios, R2V usage, and durations')
+  .requiredOption('-p, --project <dir>', 'Series output directory')
+  .requiredOption('-e, --episode <number>', 'Episode number', parseInt)
+  .action(async (opts: { project: string; episode: number }) => {
+    const series = await loadSeries(resolve(opts.project));
+    if (!series) { console.error('Series not found.'); process.exit(1); }
+
+    const script = await loadEpisodeScript(series, opts.episode);
+    if (!script) { console.error(`Episode ${opts.episode} script not found.`); process.exit(1); }
+
+    const episodeDir = getEpisodeDir(series, opts.episode);
+    const sceneDir = join(episodeDir, 'scene-001');
+    const { execSync } = await import('node:child_process');
+    const expectedAR = series.storyboardAspectRatio ?? '16:9';
+
+    let issues = 0;
+    const warn = (msg: string) => { issues++; console.log(`  ⚠ ${msg}`); };
+    const ok = (msg: string) => { console.log(`  ✓ ${msg}`); };
+
+    console.log(`Validating Video Outputs — Episode ${opts.episode}: ${script.title}`);
+    console.log(`Expected aspect ratio: ${expectedAR}\n`);
+
+    // 1. Aspect ratio check via ffprobe
+    console.log('Aspect ratio:');
+    let arIssues = 0;
+    for (const shot of script.shots) {
+      const videoPath = join(sceneDir, `shot-${String(shot.shotNumber).padStart(3, '0')}.mp4`);
+      if (!existsSync(videoPath)) continue;
+
+      try {
+        const dims = execSync(
+          `ffprobe -v quiet -show_entries stream=width,height -of csv=p=0 "${videoPath}"`,
+          { encoding: 'utf-8' },
+        ).trim().split('\n')[0];
+        const [w, h] = dims.split(',').map(Number);
+
+        if (expectedAR === '16:9' && h > w) {
+          warn(`Shot ${shot.shotNumber}: ${w}x${h} is PORTRAIT but series expects landscape (16:9)`);
+          arIssues++;
+        } else if (expectedAR === '9:16' && w > h) {
+          warn(`Shot ${shot.shotNumber}: ${w}x${h} is LANDSCAPE but series expects portrait (9:16)`);
+          arIssues++;
+        }
+      } catch {
+        warn(`Shot ${shot.shotNumber}: failed to probe dimensions`);
+        arIssues++;
+      }
+    }
+    if (arIssues === 0) ok('All video aspect ratios match series setting');
+
+    // 2. R2V model usage — flag character shots that used non-R2V models
+    console.log('\nR2V model enforcement:');
+    let r2vIssues = 0;
+    for (const shot of script.shots) {
+      if (shot.characters.length === 0) continue;
+
+      const metaPath = join(sceneDir, `shot-${String(shot.shotNumber).padStart(3, '0')}.video.json`);
+      if (!existsSync(metaPath)) continue;
+
+      try {
+        const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+        const model = meta.video?.model || meta.model || '';
+        if (!model.includes('reference-to-video')) {
+          warn(`Shot ${shot.shotNumber}: has characters [${shot.characters.join(', ')}] but used model "${model}" (not R2V)`);
+          r2vIssues++;
+        }
+      } catch {
+        warn(`Shot ${shot.shotNumber}: could not parse video metadata`);
+        r2vIssues++;
+      }
+    }
+    if (r2vIssues === 0) ok('All character shots use R2V models');
+
+    // 3. Duration check
+    console.log('\nDuration accuracy:');
+    let durIssues = 0;
+    const DURATION_TOLERANCE_SEC = 3;
+    for (const shot of script.shots) {
+      const videoPath = join(sceneDir, `shot-${String(shot.shotNumber).padStart(3, '0')}.mp4`);
+      if (!existsSync(videoPath)) continue;
+
+      try {
+        const actualDur = parseFloat(
+          execSync(
+            `ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${videoPath}"`,
+            { encoding: 'utf-8' },
+          ).trim(),
+        );
+        const requestedDur = parseInt(shot.duration, 10);
+        const diff = Math.abs(actualDur - requestedDur);
+        if (diff > DURATION_TOLERANCE_SEC) {
+          warn(`Shot ${shot.shotNumber}: actual ${actualDur.toFixed(1)}s vs requested ${requestedDur}s (diff ${diff.toFixed(1)}s)`);
+          durIssues++;
+        }
+      } catch {
+        warn(`Shot ${shot.shotNumber}: failed to probe duration`);
+        durIssues++;
+      }
+    }
+    if (durIssues === 0) ok(`All durations within ${DURATION_TOLERANCE_SEC}s tolerance`);
+
+    console.log(`\n${'─'.repeat(50)}`);
+    if (issues === 0) {
+      console.log('Video output validation PASSED — no issues found.');
+    } else {
+      console.log(`Video output validation found ${issues} issue(s). Review and re-render affected shots.`);
     }
   });
 

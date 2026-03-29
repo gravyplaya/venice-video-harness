@@ -15,6 +15,7 @@ export interface SeriesState {
   characters: Character[];
   episodes: EpisodeMeta[];
   videoDefaults: VideoModelDefaults;
+  storyboardAspectRatio?: '16:9' | '9:16' | '1:1';
   outputDir: string;
   createdAt: string;
   updatedAt: string;
@@ -95,6 +96,12 @@ export interface ShotScript {
   description: string;
   panelDescription?: string;
   characters: string[];
+  /**
+   * Characters visible as silhouettes/distant figures but not requiring R2V
+   * identity anchoring. Included in panel prompts but don't trigger R2V routing.
+   * Example: a silhouetted figure in a doorway for an establishing shot.
+   */
+  silhouetteCharacters?: string[];
   dialogue: { character: string; line: string; delivery?: string } | null;
   sfx: string | null;
   cameraMovement: string;
@@ -115,6 +122,8 @@ export interface ShotScript {
   useElements?: boolean;
   useReferenceImages?: boolean;
   sceneImagePaths?: string[];
+  /** Describes what the scene reference image should visually contribute (used in Pass 3 multi-edit). */
+  sceneRefDescription?: string;
   /** Negative prompt appended during video generation for this shot. */
   negativePrompt?: string;
   /** Audio URL to use as background audio input for models that support it. */

@@ -19,6 +19,7 @@ import {
   MODELS_SUPPORTING_END_IMAGE,
   MODELS_SUPPORTING_AUDIO_INPUT,
 } from '../series/types.js';
+import { getCharacterDir } from '../series/manager.js';
 import {
   buildKlingMultiShotPrompt,
   buildVideoPrompt,
@@ -135,6 +136,7 @@ interface RenderVideoOptions {
   negativePrompt?: string;
   audioUrl?: string;
   videoUrl?: string;
+  aspectRatio?: string;
 }
 
 function fileToDataUri(filePath: string, mimeType = 'image/png'): string | undefined {
@@ -181,7 +183,7 @@ async function renderVideoFile(
   }
 
   if (prompt.model.includes('reference-to-video')) {
-    body.aspect_ratio = '9:16';
+    body.aspect_ratio = options.aspectRatio ?? '16:9';
   }
 
   if (audioUrl && MODELS_SUPPORTING_AUDIO_INPUT.has(prompt.model)) {
@@ -230,7 +232,16 @@ async function renderVideoFile(
     console.log(`  Scene images: ${(body.scene_image_urls as string[]).length}`);
   }
 
-  console.log(`  Queueing video: model=${prompt.model}, duration=${prompt.duration}, prompt=${(prompt.prompt).length} chars`);
+  if (options.aspectRatio && body.aspect_ratio && body.aspect_ratio !== options.aspectRatio) {
+    console.warn(`  ⚠ Aspect ratio mismatch: sending ${body.aspect_ratio} but series expects ${options.aspectRatio}`);
+  }
+
+  if (prompt.characterElements && prompt.characterElements.length > 0
+    && !prompt.model.includes('reference-to-video')) {
+    console.warn(`  ⚠ Shot has characters but model ${prompt.model} is NOT R2V — character identity may drift`);
+  }
+
+  console.log(`  Queueing video: model=${prompt.model}, duration=${prompt.duration}, aspect=${body.aspect_ratio ?? 'default'}, prompt=${(prompt.prompt).length} chars`);
 
   let queueResponse: QueueResponse;
   try {
@@ -301,8 +312,7 @@ function resolveCharacterElements(
 
   if (resolvedChars.length === 0) return {};
 
-  const charDir = (name: string) =>
-    join(series.outputDir, 'characters', name.toLowerCase());
+  const charDirFn = (name: string) => getCharacterDir(series, name);
 
   const autoElements = prompt.modelResolution?.autoUseElements ?? false;
   const autoRefs = prompt.modelResolution?.autoUseReferenceImages ?? false;
@@ -317,7 +327,7 @@ function resolveCharacterElements(
       }));
 
     const elements: VideoElement[] = slots.map(slot => {
-      const dir = charDir(slot.characterName);
+      const dir = charDirFn(slot.characterName);
       const frontal = join(dir, 'front.png');
       const refs = ['three-quarter.png', 'profile.png', 'back.png']
         .map(f => join(dir, f))
@@ -337,7 +347,7 @@ function resolveCharacterElements(
     const paths = resolvedChars
       .slice(0, 4)
       .flatMap(c => {
-        const dir = charDir(c.name);
+        const dir = charDirFn(c.name);
         return ['front.png', 'three-quarter.png']
           .map(f => join(dir, f))
           .filter(p => existsSync(p));
@@ -526,6 +536,7 @@ async function renderSingleShotUnit(
     elements,
     referenceImagePaths,
     sceneImagePaths,
+    aspectRatio: series.storyboardAspectRatio ?? '16:9',
   });
 
   const durationSec = getVideoDuration(savedPath);
@@ -588,8 +599,7 @@ async function renderMultiShotUnit(
     .map(name => series.characters.find(c => c.name.toUpperCase() === name.toUpperCase()))
     .filter(Boolean) as typeof series.characters;
 
-  const charDir = (name: string) =>
-    join(series.outputDir, 'characters', name.toLowerCase());
+  const charDirFn2 = (name: string) => getCharacterDir(series, name);
 
   let elements: VideoElement[] | undefined;
   let referenceImagePaths: string[] | undefined;
@@ -597,7 +607,7 @@ async function renderMultiShotUnit(
   if (prompt.characterElements && prompt.characterElements.length > 0
     && MODELS_SUPPORTING_ELEMENTS.has(prompt.model)) {
     elements = prompt.characterElements.map(slot => {
-      const dir = charDir(slot.characterName);
+      const dir = charDirFn2(slot.characterName);
       const frontal = join(dir, 'front.png');
       const refs = ['three-quarter.png', 'profile.png', 'back.png']
         .map(f => join(dir, f))
@@ -612,7 +622,7 @@ async function renderMultiShotUnit(
   } else if (MODELS_SUPPORTING_REFERENCE_IMAGES.has(prompt.model) && resolvedChars.length > 0) {
     referenceImagePaths = resolvedChars
       .flatMap(c => {
-        const dir = charDir(c.name);
+        const dir = charDirFn2(c.name);
         return ['front.png', 'three-quarter.png']
           .map(f => join(dir, f))
           .filter(p => existsSync(p));
@@ -628,6 +638,7 @@ async function renderMultiShotUnit(
     endFrameImagePath: endFramePath,
     elements,
     referenceImagePaths,
+    aspectRatio: series.storyboardAspectRatio ?? '16:9',
   });
 
   const segments = splitRenderedUnitIntoShots(savedUnitPath, unit, new Map(shots.map(shot => [shot.shotNumber, shot])), sceneDir);

@@ -124,7 +124,12 @@ export function getCharacterDir(series: SeriesState, characterName: string): str
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  return join(series.outputDir, 'characters', safeName);
+  const slugPath = join(series.outputDir, 'characters', safeName);
+  if (existsSync(slugPath)) return slugPath;
+  // Fall back to raw character name (handles directories created outside the CLI)
+  const rawPath = join(series.outputDir, 'characters', characterName);
+  if (existsSync(rawPath)) return rawPath;
+  return slugPath;
 }
 
 export async function saveEpisodeScript(

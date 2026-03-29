@@ -258,6 +258,12 @@ Use `POST /video/quote` (via `quoteVideo()`) to estimate costs before committing
 10. **Always validate durations against model specs.** The atmosphere model (`veo3.1-fast-image-to-video`) only accepts 4s/6s/8s — never use 3s or 5s. The video queue function auto-snaps invalid durations to the nearest valid value.
 11. **Front-load style in all prompts.** Aesthetic/style descriptions must appear at the START of prompts, not buried at the end. This prevents style drift across angles and shots.
 12. **Use cfg_scale 10 for character references and storyboard panels.** Lower values (e.g., 7) allow the model too much freedom, causing style inconsistency between angles.
+13. **Always pass `aspectRatio: '16:9'` (or the series ratio) explicitly to R2V video generation.** The R2V model requires `aspect_ratio` and will default to 16:9 if omitted, but always be explicit to prevent orientation bugs.
+14. **Never multi-edit close-up face shots on 16:9 panels.** The 1024x1024→16:9 crop removes ~25% from top/bottom, losing foreheads and chins. Generate close-up panels from scratch with `nano-banana-pro` instead, then use multi-edit only for medium/wide shots.
+15. **Match lighting across consecutive shots in the same location.** When generating panels for sequential shots in the same environment, style-match later shots against earlier ones. Explicitly describe the established lighting in each subsequent prompt.
+16. **Use `silhouetteCharacters` for distant/silhouetted figures.** Characters visible only as silhouettes (e.g., figure in doorway) go in `silhouetteCharacters`, not `characters`. This ensures they appear in panels without triggering R2V routing or "no people" negative prompts.
+17. **Describe the Venice AI logo as crossed-keys, never as "triple-V" or "VVV".** The actual logo is two ornate skeleton keys crossed in an X with a chevron/book at top. Use the full geometric description in prompts, or multi-edit with the logo PNG as reference.
+18. **Use Kling 3.0 native multi-shot for sequences within a single generation.** Structure: define subjects with `@Element` refs up front, label shots as `Shot N (Xs):`, use `[Character, voice description]: "dialogue"` format, and separate shots with `Immediately, cut to:`. This produces a single video with multiple shots — no concatenation needed. Max 6 shots, 15s total. See [Kling 3.0 Prompting Guide](https://blog.fal.ai/kling-3-0-prompting-guide/).
 
 ## Learned Anti-Patterns (Production Issues Log)
 
@@ -286,6 +292,55 @@ Issues discovered during production and their fixes. The agent should internaliz
 **Symptom:** Character appearance was inconsistent between cuts in talk show format.
 **Root cause:** The generation planner was optimizing for temporal continuity (multi-shot grouping) when the format actually needs identity consistency (R2V singles with reference anchoring).
 **Fix:** For formats with frequent speaker cuts (talk shows, interviews, panels), set `mustStaySingle: true` on all shots or ensure no cross-character grouping occurs. Every character shot uses `kling-o3-standard-reference-to-video` with `elements` for frontal reference and `reference_image_urls` for angle coverage.
+
+### 5. R2V Model Defaults to 9:16 (Vertical) Without Explicit Aspect Ratio
+**Symptom:** Shot 10 video generated as 716x1284 (portrait) despite the panel being 16:9 landscape.
+**Root cause:** `buildModelParams()` in `models.ts` defaulted R2V models to `'9:16'` when no `aspectRatio` was passed. The video generation pipeline didn't always propagate the series' aspect ratio.
+**Fix:** Changed the R2V fallback default from `'9:16'` to `'16:9'` in `buildModelParams()`. Added a warning in `queueVideo()` when no explicit aspect ratio is provided for R2V models. Always pass `aspectRatio` explicitly in generation scripts.
+**File:** `src/venice/models.ts`, `src/venice/video.ts`
+
+### 6. Multi-Edit Crops Foreheads on 16:9 Close-Up Panels
+**Symptom:** After multi-editing a close-up face shot, the forehead (with a logo/sigil) was completely cropped off.
+**Root cause:** Venice multi-edit always returns 1024x1024. Restoring 16:9 aspect ratio crops ~25% from top and bottom. Close-up face shots lose foreheads and chins.
+**Fix:** For close-up shots that need forehead detail (logos, sigils, headwear), generate the panel from scratch with `nano-banana-pro` instead of multi-editing an existing panel. Multi-edit is safe for medium/wide shots where the crop margins don't hit critical content. Added a warning in `panel-fixer.ts`.
+**File:** `src/mini-drama/panel-fixer.ts`
+
+### 7. Lighting Inconsistency Between Consecutive Shots in Same Location
+**Symptom:** Shot 3 (circuit close-up in sietch) was extremely dark while shot 2 (SeehRov at workbench in same sietch) had warm amber lighting. Jarring cut.
+**Root cause:** Each panel was generated independently with no reference to the preceding shot's lighting. The same environment description produced wildly different interpretations.
+**Fix:** For consecutive shots in the same location, style-match the later panel against the earlier one using multi-edit. In the panel generation prompt, explicitly describe the lighting conditions from the preceding shot. Add the preceding shot's panel as a style reference in the multi-edit pass.
+**Rule:** When scripting shots, if two consecutive shots share the same environment, the second shot's prompt must explicitly reference the lighting established in the first.
+
+### 8. Establishing Shots Missing Silhouetted Characters
+**Symptom:** Shot 11 (SeehRov silhouetted in doorway) had `characters: []` in the script because he's a distant silhouette, not a face-detail character. The panel generator treated it as an empty scene with "no people" in the negative prompt.
+**Root cause:** The binary `characters` array was either "full R2V character" or "empty scene with no people." No middle ground for silhouetted/distant figures.
+**Fix:** Added `silhouetteCharacters` field to `ShotScript`. Characters listed here appear in panel prompts (described by wardrobe for silhouette identification) but don't trigger R2V routing or "no people" negative prompts. The prompt builder includes them as "distant silhouetted figure" descriptions.
+**Files:** `src/series/types.ts`, `src/mini-drama/prompt-builder.ts`
+
+### 9. Logo/Sigil Mismatch: "Triple-V" vs Actual Venice AI Logo
+**Symptom:** Prompts described "Venice triple-V sigil" or "VVV" but the actual Venice AI logo is a crossed-keys design (two ornate skeleton keys crossed in an X with a chevron/book shape at top). Models generated random V-shaped symbols instead.
+**Root cause:** The character and series descriptions used shorthand "triple-V" which doesn't describe the actual logo geometry.
+**Fix:** Always use the full logo description: "the Venice AI crossed-keys logo — two ornate skeleton keys crossed in an X formation with a chevron/open-book shape at the top where they cross." Describe logos in text prompts only — do not pass logo PNG files as multi-edit references.
+**Rule:** Never use "VVV" or "triple-V" in prompts to describe the Venice AI logo. Always describe the crossed-keys geometry.
+
+### 10. Hardcoded R2V Aspect Ratio `9:16` in Mini-Drama Pipeline
+**Symptom:** R2V character shots rendered as vertical/portrait despite the series being set to 16:9 landscape.
+**Root cause:** `renderVideoFile` in `video-generator.ts` hardcoded `body.aspect_ratio = '9:16'` for all R2V models. This bypassed the corrected default in `models.ts` / `video.ts` because the mini-drama pipeline builds its own request body without calling `queueVideo()` or `buildModelParams()`.
+**Fix:** Changed to `body.aspect_ratio = options.aspectRatio ?? '16:9'` and threaded `series.storyboardAspectRatio` through from the render call sites.
+**Rule:** Never hardcode aspect ratios in model-specific branches. Always derive from the series `storyboardAspectRatio` setting. After video generation, run `validate-video-outputs` to verify all shots match the expected orientation.
+**Files:** `src/mini-drama/video-generator.ts`
+
+### 11. Logo PNG as Multi-Edit Reference Causes Visual Overlay
+**Symptom:** Passing `VVV_Token_White.png` (white logo on transparent background) as a multi-edit reference image caused the model to render the logo file as a massive white overlay composited onto the scene, instead of using it as a design reference.
+**Root cause:** Multi-edit models interpret reference images literally when they contain large transparent/white areas. The model sees the white shape and composits it rather than extracting the design pattern.
+**Fix:** Removed logo PNG from multi-edit reference slots. Describe logo designs in the text prompt only.
+**Rule:** Never pass mostly-transparent or mostly-white PNG files as multi-edit references. Describe logos, symbols, and marks in text prompts. Reserve multi-edit reference slots exclusively for character face/body references and scene environment references.
+
+### 12. Close-Up Character Panels: Inverted Pipeline for Better Face Match
+**Symptom:** Generating a scene panel from scratch and then multi-editing the face to match a character reference produced a different-looking person — the base generation's face was too dominant for multi-edit to override.
+**Root cause:** For tight close-ups, the generated face occupies most of the frame. Multi-edit adjustments are not strong enough to fully replace facial identity at that scale.
+**Fix:** Use an "inverted" approach: start from the character's reference image (e.g., `profile.png`) as the base image and multi-edit the background/environment onto it. This guarantees the face IS the reference.
+**Rule:** For close-up character shots, prefer the inverted pipeline: start from the character reference image and edit the background, rather than generating a scene and editing the face.
 
 ## Output
 

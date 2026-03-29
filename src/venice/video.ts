@@ -100,6 +100,11 @@ export async function queueVideo(
   if (options.audioUrl) body.audio_url = options.audioUrl;
   if (options.videoUrl) body.video_url = options.videoUrl;
 
+  // R2V models require aspect_ratio — warn if not explicitly set
+  if (modelSpec?.id.includes('reference-to-video') && !options.aspectRatio) {
+    console.warn(`  ⚠ No aspect_ratio provided for R2V model ${options.model} — defaulting to 16:9. Set explicitly to avoid wrong orientation.`);
+  }
+
   const modelParams = buildModelParams(options.model, {
     aspectRatio: options.aspectRatio,
     resolution: options.resolution,
