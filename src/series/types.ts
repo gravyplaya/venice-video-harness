@@ -174,9 +174,10 @@ export interface GenerationPlan {
 // These are sensible defaults. Override per-project via series.json videoDefaults.
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_ACTION_MODEL = 'kling-o3-standard-reference-to-video';
-export const DEFAULT_ATMOSPHERE_MODEL = 'veo3.1-fast-image-to-video';
-export const DEFAULT_CHARACTER_CONSISTENCY_MODEL = 'kling-o3-standard-reference-to-video';
+export const DEFAULT_ACTION_MODEL = 'seedance-2-0-image-to-video';
+export const DEFAULT_ATMOSPHERE_MODEL = 'seedance-2-0-image-to-video';
+export const DEFAULT_CHARACTER_CONSISTENCY_MODEL = 'seedance-2-0-reference-to-video';
+export const KLING_R2V_MODEL = 'kling-o3-standard-reference-to-video';
 export const KLING_MULTISHOT_MODEL = 'kling-o3-pro-image-to-video';
 
 export const VIDEO_NO_MUSIC_SUFFIX = 'No background music. Only generate dialogue, ambient sound, and sound effects.';
@@ -196,6 +197,7 @@ export const MODELS_SUPPORTING_ELEMENTS = new Set([
 export const MODELS_SUPPORTING_REFERENCE_IMAGES = new Set([
   'kling-o3-standard-reference-to-video',
   'kling-o3-pro-reference-to-video',
+  'seedance-2-0-reference-to-video',
   'vidu-q3-image-to-video',
   'vidu-q3-text-to-video',
 ]);
@@ -215,6 +217,11 @@ export const MODELS_SUPPORTING_END_IMAGE = new Set([
   'kling-2.6-pro-image-to-video',
   'kling-2.5-turbo-pro-image-to-video',
   'pixverse-v5.6-transition',
+]);
+
+export const MODELS_USING_IMAGE_TAGS = new Set([
+  'seedance-2-0-reference-to-video',
+  'grok-imagine-reference-to-video',
 ]);
 
 export const MODELS_SUPPORTING_AUDIO_INPUT = new Set([

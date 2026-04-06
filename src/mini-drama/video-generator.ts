@@ -18,6 +18,7 @@ import {
   MODELS_SUPPORTING_SCENE_IMAGES,
   MODELS_SUPPORTING_END_IMAGE,
   MODELS_SUPPORTING_AUDIO_INPUT,
+  MODELS_USING_IMAGE_TAGS,
 } from '../series/types.js';
 import { getCharacterDir } from '../series/manager.js';
 import {
@@ -170,7 +171,9 @@ async function renderVideoFile(
     body.end_image_url = imageToDataUri(endFrameImagePath);
   }
 
-  if (prompt.model.includes('veo')) {
+  if (prompt.model.includes('seedance')) {
+    body.resolution = '720p';
+  } else if (prompt.model.includes('veo')) {
     body.resolution = '720p';
   } else if (prompt.model.includes('wan-2.6') || prompt.model.includes('wan-2.5')) {
     body.resolution = '1080p';
@@ -182,7 +185,7 @@ async function renderVideoFile(
     body.resolution = '720p';
   }
 
-  if (prompt.model.includes('reference-to-video')) {
+  if (prompt.model.includes('reference-to-video') || prompt.model.includes('seedance')) {
     body.aspect_ratio = options.aspectRatio ?? '16:9';
   }
 

@@ -88,12 +88,14 @@ The full model registry lives in `src/venice/models.ts` with typed specs for eve
 - `sora-2-pro-image-to-video` (4-12s, 1080p, audio)
 
 **Atmosphere / Establishing / Mood:**
-- `veo3.1-fast-image-to-video` (default atmosphere model, 4-8s, up to 4K, audio)
+- `seedance-2-0-image-to-video` (default atmosphere + action model, 4-15s, 720p, native stereo audio, #1 ranked)
+- `veo3.1-fast-image-to-video` (4-8s, up to 4K, audio)
 - `veo3-fast-image-to-video` (8s, audio)
 - `pixverse-v5.6-image-to-video` (5-8s, up to 1080p, audio)
 
 **Character Consistency (Reference-to-Video):**
-- `kling-o3-standard-reference-to-video` (default R2V, 3-15s, `elements`, `reference_image_urls`, `scene_image_urls`)
+- `seedance-2-0-reference-to-video` (default R2V, 4-15s, `reference_image_urls` up to 4, `@Image` tags, native audio, #1 ranked)
+- `kling-o3-standard-reference-to-video` (fallback for 3+ characters, 3-15s, `elements`, `reference_image_urls`, `scene_image_urls`)
 - `kling-o3-pro-reference-to-video` (3-15s, full reference support)
 
 **Long Duration:**
@@ -111,13 +113,16 @@ The full model registry lives in `src/venice/models.ts` with typed specs for eve
 | Capability | Models |
 |-----------|--------|
 | `elements` (structured @Element refs) | Kling O3 R2V (standard + pro) |
-| `reference_image_urls` (flat ref array) | Kling O3 R2V, Vidu Q3 |
+| `reference_image_urls` (flat ref array) | Seedance 2.0 R2V, Kling O3 R2V, Vidu Q3 |
 | `scene_image_urls` (environment refs) | Kling O3 R2V (standard + pro) |
 | `end_image_url` (frame targeting) | All Kling image-to-video, PixVerse Transition |
 | `audio_url` (background audio input) | Wan 2.6, Wan 2.5 Preview |
+| `@Image` tags (flat ref prompt syntax) | Seedance 2.0 R2V, Grok Imagine R2V |
+| Native stereo audio with lip-sync | Seedance 2.0 (8+ languages) |
 | 4K output | Veo 3.1, LTX 2.0 |
 | 30s duration | Longcat |
 | 20s duration | LTX 2.0 Fast, LTX 2.0 v2.3 Fast |
+| 15s duration | Seedance 2.0, Kling O3/V3, Wan 2.6 |
 
 ### Image Generation Models
 
@@ -140,16 +145,17 @@ The full model registry lives in `src/venice/models.ts` with typed specs for eve
 
 ## Default Venice Routing
 
-**Core principle: R2V by default, atmosphere model only for empty establishing shots.**
+**Core principle: Seedance R2V by default, Kling O3 R2V fallback for 3+ character scenes, Seedance i2v for establishing shots.**
 
-Almost all shots should use the R2V (reference-to-video) model — it supports `elements` and `reference_image_urls` for identity anchoring and delivers the best consistency across shots. The only exception is truly empty establishing/mood shots with no characters or story subjects, which can use the atmosphere model for maximum visual quality.
+Almost all shots should use a reference-to-video model for identity anchoring. Seedance 2.0 R2V (#1 ranked) is the new default, using flat `reference_image_urls` with `@Image` prompt tags. For shots with 3+ characters, the system automatically falls back to Kling O3 R2V which provides structured `elements` for better per-character identity separation. Empty establishing/mood shots use Seedance i2v for its superior cinematic quality and physics.
 
 Preferred defaults (overridable per-project via `series.json` → `videoDefaults`):
 
 | Role | Default Model | When Used |
 |------|--------------|-----------|
-| Default (all non-establishing) | `kling-o3-standard-reference-to-video` | All shots with characters or story action — `elements` + `reference_image_urls` for identity anchoring |
-| Establishing / mood only | `veo3.1-fast-image-to-video` | Empty establishing/mood shots with no characters — up to 4K, great visual quality |
+| Character shots (1-2 characters) | `seedance-2-0-reference-to-video` | Default R2V — `reference_image_urls` with `@Image` tags, up to 15s, native stereo audio |
+| Character shots (3+ characters) | `kling-o3-standard-reference-to-video` | Auto-fallback — structured `elements` + `reference_image_urls` for multi-character identity |
+| Establishing / mood / action (no chars) | `seedance-2-0-image-to-video` | Epic cinematic quality, physics-aware, up to 15s, native audio |
 | Image Generation | `nano-banana-pro` | Best prompt adherence with `cfg_scale: 10` |
 | Multi-Edit | `nano-banana-pro-edit` | Reliable character correction |
 | TTS | `tts-kokoro` | 50+ voices, fast, consistent |
@@ -255,7 +261,7 @@ Use `POST /video/quote` (via `quoteVideo()`) to estimate costs before committing
 7. Use the model registry (`src/venice/models.ts`) to validate model capabilities before making API calls.
 8. Check model support for `elements`, `reference_image_urls`, `scene_image_urls`, `end_image_url`, and `audio_url` before including them in requests.
 9. **Never group shots with different characters into multi-shot units.** Multi-shot grouping requires pairwise character overlap between consecutive shots — shots cutting between different speakers (e.g., host → guest) must be separate singles so each gets R2V identity anchoring.
-10. **Always validate durations against model specs.** The atmosphere model (`veo3.1-fast-image-to-video`) only accepts 4s/6s/8s — never use 3s or 5s. The video queue function auto-snaps invalid durations to the nearest valid value.
+10. **Always validate durations against model specs.** Seedance 2.0 accepts 4s/5s/8s/10s/12s/15s — not all integers. The video queue function auto-snaps invalid durations to the nearest valid value.
 11. **Front-load style in all prompts.** Aesthetic/style descriptions must appear at the START of prompts, not buried at the end. This prevents style drift across angles and shots.
 12. **Use cfg_scale 10 for character references and storyboard panels.** Lower values (e.g., 7) allow the model too much freedom, causing style inconsistency between angles.
 13. **Always pass `aspectRatio: '16:9'` (or the series ratio) explicitly to R2V video generation.** The R2V model requires `aspect_ratio` and will default to 16:9 if omitted, but always be explicit to prevent orientation bugs.
@@ -264,6 +270,11 @@ Use `POST /video/quote` (via `quoteVideo()`) to estimate costs before committing
 16. **Use `silhouetteCharacters` for distant/silhouetted figures.** Characters visible only as silhouettes (e.g., figure in doorway) go in `silhouetteCharacters`, not `characters`. This ensures they appear in panels without triggering R2V routing or "no people" negative prompts.
 17. **Describe the Venice AI logo as crossed-keys, never as "triple-V" or "VVV".** The actual logo is two ornate skeleton keys crossed in an X with a chevron/book at top. Use the full geometric description in prompts, or multi-edit with the logo PNG as reference.
 18. **Use Kling 3.0 native multi-shot for sequences within a single generation.** Structure: define subjects with `@Element` refs up front, label shots as `Shot N (Xs):`, use `[Character, voice description]: "dialogue"` format, and separate shots with `Immediately, cut to:`. This produces a single video with multiple shots — no concatenation needed. Max 6 shots, 15s total. See [Kling 3.0 Prompting Guide](https://blog.fal.ai/kling-3-0-prompting-guide/).
+19. **Seedance 2.0 R2V uses `@Image` tags, not `@Element` tags.** When the resolved model is Seedance R2V, replace character names with `@Image1`, `@Image2` in prompts. Do NOT use `@Element` tags — Seedance does not support structured elements. The prompt builder handles this automatically via `useImageTags`.
+20. **Keep Seedance prompts under 60 words for best results.** Seedance responds to precision, not volume. Use the 5-part structure: Subject, Action (present tense, one verb), Camera (shot size + movement), Style (lighting, color), Constraints (what to exclude). See [Seedance prompting guide](https://venice.ai/blog/seedance-sota-video-generation-live-on-venice).
+21. **Use "lens switch" for Seedance multi-shot sequences.** Seedance 2.0 supports native multi-shot via "lens switch" in prompts to signal cuts, maintaining character/environment continuity across transitions within a single generation.
+22. **Seedance excels at physics-aware prompting.** Describe forces, not just actions — "tires smoke as car drifts 90 degrees" rather than "car turns." Friction, weight, material interactions, and contact physics produce better results with Seedance's physics-aware training.
+23. **3+ character shots auto-fallback to Kling O3 R2V.** When the default R2V model is Seedance (flat refs, max 4 images), shots with 3+ characters automatically fall back to Kling O3 R2V which supports structured `elements` for better per-character identity separation.
 
 ## Learned Anti-Patterns (Production Issues Log)
 
@@ -283,7 +294,7 @@ Issues discovered during production and their fixes. The agent should internaliz
 **Fallback:** When base generation still drifts, use a two-pass approach: generate base image, then style-match via multi-edit against a good reference shot.
 
 ### 3. Atmosphere Model Duration Validation
-**Symptom:** `veo3.1-fast-image-to-video` returned 400 error for `duration: "3s"` — it only accepts 4s/6s/8s.
+**Symptom:** `veo3.1-fast-image-to-video` returned 400 error for `duration: "3s"` — it only accepts 4s/6s/8s. Seedance 2.0 (now the default) accepts 4s/5s/8s/10s/12s/15s — not all integers.
 **Root cause:** Script had 3s establishing/insert shots. No validation against model's allowed durations.
 **Fix:** Added auto-snap in `queueVideo()` that checks the model's duration spec and snaps to nearest valid value with a warning.
 **File:** `src/venice/video.ts`
@@ -291,7 +302,7 @@ Issues discovered during production and their fixes. The agent should internaliz
 ### 4. Talk Show Format: All Character Shots Must Be R2V Singles
 **Symptom:** Character appearance was inconsistent between cuts in talk show format.
 **Root cause:** The generation planner was optimizing for temporal continuity (multi-shot grouping) when the format actually needs identity consistency (R2V singles with reference anchoring).
-**Fix:** For formats with frequent speaker cuts (talk shows, interviews, panels), set `mustStaySingle: true` on all shots or ensure no cross-character grouping occurs. Every character shot uses `kling-o3-standard-reference-to-video` with `elements` for frontal reference and `reference_image_urls` for angle coverage.
+**Fix:** For formats with frequent speaker cuts (talk shows, interviews, panels), set `mustStaySingle: true` on all shots or ensure no cross-character grouping occurs. Every character shot uses the default R2V model (`seedance-2-0-reference-to-video` for 1-2 characters, auto-fallback to `kling-o3-standard-reference-to-video` for 3+) with reference images for identity anchoring.
 
 ### 5. R2V Model Defaults to 9:16 (Vertical) Without Explicit Aspect Ratio
 **Symptom:** Shot 10 video generated as 716x1284 (portrait) despite the panel being 16:9 landscape.

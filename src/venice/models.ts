@@ -397,6 +397,31 @@ export const VIDEO_MODELS: VideoModelSpec[] = [
     supportsElements: false, supportsReferenceImages: false, supportsSceneImages: false, supportsEndImage: false,
     maxDurationSec: 8, privacy: 'anonymized', offline: false,
   },
+  // -- Seedance 2.0 --
+  {
+    id: 'seedance-2-0-image-to-video', name: 'Seedance 2.0', type: 'image-to-video',
+    durations: ['4s', '5s', '8s', '10s', '12s', '15s'],
+    resolutions: ['480p', '720p'], aspectRatios: ['16:9', '9:16', '4:3', '3:4', '1:1'],
+    audio: true, audioConfigurable: true, audioInput: false, videoInput: false,
+    supportsElements: false, supportsReferenceImages: false, supportsSceneImages: false, supportsEndImage: false,
+    maxDurationSec: 15, privacy: 'anonymized', offline: false,
+  },
+  {
+    id: 'seedance-2-0-text-to-video', name: 'Seedance 2.0', type: 'text-to-video',
+    durations: ['4s', '5s', '8s', '10s', '12s', '15s'],
+    resolutions: ['480p', '720p'], aspectRatios: ['16:9', '9:16', '4:3', '3:4', '1:1'],
+    audio: true, audioConfigurable: true, audioInput: false, videoInput: false,
+    supportsElements: false, supportsReferenceImages: false, supportsSceneImages: false, supportsEndImage: false,
+    maxDurationSec: 15, privacy: 'anonymized', offline: false,
+  },
+  {
+    id: 'seedance-2-0-reference-to-video', name: 'Seedance 2.0 R2V', type: 'image-to-video',
+    durations: ['4s', '5s', '8s', '10s', '12s', '15s'],
+    resolutions: ['480p', '720p'], aspectRatios: ['16:9', '9:16', '4:3', '3:4', '1:1'],
+    audio: true, audioConfigurable: true, audioInput: false, videoInput: false,
+    supportsElements: false, supportsReferenceImages: true, supportsSceneImages: false, supportsEndImage: false,
+    maxDurationSec: 15, privacy: 'anonymized', offline: false,
+  },
   // -- Sora 2 --
   {
     id: 'sora-2-image-to-video', name: 'Sora 2', type: 'image-to-video',

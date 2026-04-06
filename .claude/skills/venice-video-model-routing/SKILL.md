@@ -143,36 +143,39 @@ Use `--quote` with the video script to check pricing before generation.
 
 ---
 
-## 1. Video Model Routing: R2V by Default
+## 1. Video Model Routing: Seedance R2V by Default
 
-**Core principle: R2V by default, atmosphere model only for empty establishing shots.**
+**Core principle: Seedance R2V by default, Kling O3 R2V fallback for 3+ character scenes, Seedance i2v for establishing shots.**
 
-Almost all shots should use the R2V (reference-to-video) model — it supports `elements` and `reference_image_urls` for identity anchoring and delivers the best consistency across shots. Non-R2V models have zero reference support. The atmosphere model is reserved only for truly empty establishing/mood shots with no characters or story subjects.
+Almost all shots should use a reference-to-video model for identity anchoring. Seedance 2.0 R2V (#1 ranked on Artificial Analysis) is the default, using flat `reference_image_urls` with `@Image` prompt tags. For shots with 3+ characters, the system falls back to Kling O3 R2V which provides structured `elements` for better per-character identity separation. Empty establishing/mood shots use Seedance i2v for superior cinematic quality and physics.
 
 | Role | Default Model | When Used | Capabilities |
 |------|--------------|-----------|--------------|
-| **Default (all non-establishing)** | `kling-o3-standard-reference-to-video` | All shots with characters or story action | `elements`, `reference_image_urls`, `scene_image_urls`; durations 3-15s |
-| **Establishing / mood only** | `veo3.1-fast-image-to-video` | Empty establishing/mood shots with no characters | 8s only; requires `resolution: '720p'`; NO `elements`/`reference_image_urls` |
+| **Character shots (1-2 chars)** | `seedance-2-0-reference-to-video` | Default R2V — flat `reference_image_urls` with `@Image` tags | Up to 4 ref images, 4-15s, native stereo audio, `aspect_ratio` |
+| **Character shots (3+ chars)** | `kling-o3-standard-reference-to-video` | Auto-fallback — structured `elements` for multi-character identity | `elements`, `reference_image_urls`, `scene_image_urls`; 3-15s |
+| **Establishing / mood / action** | `seedance-2-0-image-to-video` | No characters — epic cinematic quality, physics-aware | 4-15s, `resolution: '720p'`, `aspect_ratio`, native audio |
 
 Recommended constants:
 
 ```
-ACTION_MODEL              = 'kling-o3-standard-reference-to-video'
-ATMOSPHERE_MODEL          = 'veo3.1-fast-image-to-video'
-CHARACTER_CONSISTENCY_MODEL = 'kling-o3-standard-reference-to-video'
+ACTION_MODEL              = 'seedance-2-0-image-to-video'
+ATMOSPHERE_MODEL          = 'seedance-2-0-image-to-video'
+CHARACTER_CONSISTENCY_MODEL = 'seedance-2-0-reference-to-video'
+KLING_R2V_MODEL           = 'kling-o3-standard-reference-to-video'  (fallback for 3+ chars)
 MULTISHOT_MODEL           = 'kling-o3-pro-image-to-video'
 ```
 
 ## 2. Video Model Routing Decision
 
-The routing is intentionally simple — two paths:
+Three-path routing based on character count:
 
 | Priority | Condition | Result | Reason |
 |----------|-----------|--------|--------|
-| 1 | Establishing/mood shot with no characters | Atmosphere model | No characters to anchor — use best visual quality model |
-| 2 | Everything else | R2V model | Identity anchoring via `elements` + `reference_image_urls` — consistency first |
+| 1 | Establishing/mood shot with no characters | Seedance i2v | No characters to anchor — best cinematic quality + physics |
+| 2 | 1-2 characters | Seedance R2V | Identity anchoring via flat `reference_image_urls` — #1 ranked quality |
+| 3 | 3+ characters | Kling O3 R2V | Structured `elements` handle more identities (up to 7 elements vs 4 flat refs) |
 
-When the R2V model is selected, `elements` and `reference_image_urls` are auto-enabled. No manual flags needed per shot.
+When Seedance R2V is selected, `reference_image_urls` and `@Image` prompt tags are auto-enabled. When Kling O3 R2V is selected (3+ char fallback), `elements` and `@Element` tags are auto-enabled.
 
 ## 3. Reference Image Attachment Matrix
 
@@ -191,32 +194,35 @@ Three reference mechanisms exist for video generation, each supported by differe
 
 ### `reference_image_urls` (Flat General)
 
-- **Supported by:** `kling-o3-standard-reference-to-video`, `kling-o3-pro-reference-to-video`, `vidu-q3-image-to-video`
+- **Supported by:** `seedance-2-0-reference-to-video`, `kling-o3-standard-reference-to-video`, `kling-o3-pro-reference-to-video`, `vidu-q3-image-to-video`
 - **Structure:** Flat array of up to 4 reference images
-- **Prompt integration:** Standard character names in text (no element tokens needed)
+- **Prompt integration:** For Seedance/Grok Imagine R2V, use `@Image1`, `@Image2` tags. For Kling R2V, standard character names or `@Element` tokens (when elements are also active). For Vidu, standard character names.
 - **Typical reference images:** Front-facing + three-quarter per character, capped at 4 total
-- **When to use:** Consistency model selected AND model supports reference images AND `elements` is not already in use
+- **When to use:** Consistency model selected AND model supports reference images. For Seedance R2V, this is the primary identity mechanism (no elements). For Kling R2V, used alongside `elements` or as a standalone fallback.
 
 ### `image_urls` (Scene/Environment Anchoring)
 
 - **Supported by:** `kling-o3-standard-reference-to-video`, `kling-o3-pro-reference-to-video`
 - **Structure:** Array of up to 4 scene/environment reference images
-- **Prompt integration:** Referenced as `@Image1`, `@Image2` in prompt text
+- **Prompt integration:** Referenced as `@Image1`, `@Image2` in prompt text (indices offset when `@Image` tags are also used for character refs)
 - **When to use:** Environment/style reference paths are explicitly provided AND model supports scene images
+- **Note:** Seedance R2V does NOT support separate scene images. Scene context is handled through prompting only.
 
 ### Capability Matrix
 
-| Parameter | Kling O3 R2V | Kling V3 Pro | Kling 2.6 Pro | Vidu Q3 | Sora 2 | Wan 2.6 | LTX 2.0 | Veo 3.1 | Longcat | PixVerse |
-|-----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| `elements` | Yes | **NO** | No | No | No | No | No | No | No | No |
-| `reference_image_urls` | Yes | **NO** | No | Yes | No | No | No | No | No | No |
-| `scene_image_urls` | Yes | No | No | No | No | No | No | No | No | No |
-| `end_image_url` | Yes | Yes | Yes | No | No | No | No | No | No | Transition |
-| `audio_url` | No | No | No | No | No | Yes | No | No | No | No |
-| `aspect_ratio` | Yes | No | No | - | Yes | T2V only | Yes | T2V only | T2V only | Yes |
-| `resolution` | No | No | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Max duration | 15s | 15s | 10s | 16s | 12s | 15s | 20s | 8s | **30s** | 8s |
-| Audio | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes |
+| Parameter | Seedance 2.0 R2V | Seedance 2.0 i2v | Kling O3 R2V | Kling V3 Pro | Vidu Q3 | Sora 2 | Wan 2.6 | LTX 2.0 | Veo 3.1 | Longcat | PixVerse |
+|-----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `elements` | No | No | Yes | **NO** | No | No | No | No | No | No | No |
+| `reference_image_urls` | **Yes** | No | Yes | **NO** | Yes | No | No | No | No | No | No |
+| `scene_image_urls` | No | No | Yes | No | No | No | No | No | No | No | No |
+| `end_image_url` | No | No | Yes | Yes | No | No | No | No | No | No | Transition |
+| `audio_url` | No | No | No | No | No | No | Yes | No | No | No | No |
+| `@Image` prompt tags | **Yes** | No | No | No | No | No | No | No | No | No | No |
+| `aspect_ratio` | Yes | Yes | Yes | No | - | Yes | T2V only | Yes | T2V only | T2V only | Yes |
+| `resolution` | Yes | Yes | No | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Max duration | **15s** | **15s** | 15s | 15s | 16s | 12s | 15s | 20s | 8s | **30s** | 8s |
+| Audio | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes |
+| Native lip-sync | **8+ langs** | **8+ langs** | No | No | No | No | No | No | No | No | No |
 
 Always gate reference attachments through the capability matrix. Sending unsupported params to models that reject them returns 400 errors. The model registry in `src/venice/models.ts` has full typed specs for every model.
 
@@ -295,16 +301,27 @@ Generate consistent storyboard panels using two Venice models in sequence:
 
 Construct prompts differently depending on the resolved model's capabilities:
 
-### Elements-Capable Models (Kling O3 R2V)
+### Image-Tag R2V Models (Seedance 2.0 R2V — default)
+
+- Replace character names in descriptions with `@Image1`, `@Image2` tokens via regex
+- Dialogue speaker uses image ref: `[@Image1, voice description, delivery]: "dialogue line"`
+- Attach `reference_image_urls` at the API layer (up to 4 flat images, front + three-quarter per character)
+- Keep prompts concise (under 60 words). Use the 5-part structure: Subject, Action, Camera, Style, Constraints.
+- Use physics-aware language: describe forces and materials, not just actions
+- For multi-shot within a single generation, use "lens switch" between scene descriptions
+- Append compact aesthetic + audio exclusion suffix
+- **Important:** Seedance does NOT support `elements`, `scene_image_urls`, or `end_image_url`
+
+### Elements-Capable Models (Kling O3 R2V — 3+ character fallback)
 
 - Replace character names in descriptions with `@Element1`, `@Element2` tokens via regex
 - Dialogue speaker uses element ref: `@Element1 (voice: low contralto...) says nervously: "..."`
 - Scene image refs added as `Scene style references: @Image1, @Image2.`
 - Append full aesthetic string + audio exclusion suffix (e.g., `No background music. Only generate dialogue, ambient sound, and sound effects.`)
 
-### Reference-Image Models Without Elements (Vidu Q3)
+### Reference-Image Models Without Tags (Vidu Q3)
 
-- Use standard character names in prompt text (no element tokens)
+- Use standard character names in prompt text (no element or image tokens)
 - Attach `reference_image_urls` at the API layer (up to 4 flat images)
 - Dialogue uses character name directly with voice description
 
@@ -372,7 +389,7 @@ For formats with **frequent speaker cuts** (talk shows, interviews, debate panel
 
 - **Never group shots with different speakers into multi-shot units.** The Kling multi-shot model (`kling-o3-pro-image-to-video`) does NOT support `elements` or `reference_image_urls` — characters lose all identity anchoring.
 - **Set `mustStaySingle: true`** on all shots in talk show scripts, or ensure the generation planner only groups shots that share the same characters.
-- **Every character shot uses R2V** (`kling-o3-standard-reference-to-video`) with `elements` for frontal reference and `reference_image_urls` for angle coverage.
+- **Every character shot uses R2V** — `seedance-2-0-reference-to-video` for 1-2 character shots (flat `reference_image_urls` with `@Image` tags), auto-fallback to `kling-o3-standard-reference-to-video` for 3+ characters (structured `elements`).
 
 ### Multi-Shot Grouping Rules for These Formats
 
@@ -388,17 +405,20 @@ Invalid grouping (now prevented):
 
 ### Duration Validation
 
-Atmosphere model (`veo3.1-fast-image-to-video`) only accepts **4s, 6s, or 8s**. The video queue function auto-snaps invalid durations to the nearest valid value. When scripting establishing/insert shots, use 4s minimum instead of 3s.
+Seedance 2.0 (now the default for both atmosphere and character shots) accepts **4s, 5s, 8s, 10s, 12s, or 15s** — not all integers. Veo 3.1 (legacy) only accepts 4s/6s/8s. The video queue function auto-snaps invalid durations to the nearest valid value. When scripting shots, use 4s minimum instead of 3s.
 
 ## 8. Anti-Patterns and Learned Routing Failures
 
 ### API Errors
 
-- **Sending `elements`/`reference_image_urls` to Kling V3 Pro or Kling O3 Pro (non-R2V):** Returns 400. Only R2V models (`kling-o3-standard-reference-to-video`, `kling-o3-pro-reference-to-video`) support these params.
+- **Sending `elements` to Seedance R2V:** Seedance does NOT support structured `elements`. Only `reference_image_urls` (flat array, up to 4). The harness gates this via `supportsElements: false` in the model spec.
+- **Sending `scene_image_urls` to Seedance R2V:** Not supported. Scene context must be described in the prompt text only.
+- **Using `@Element` tags in Seedance prompts:** Seedance uses `@Image1`, `@Image2` tags for reference images. The `useImageTags` flag in `ModelResolution` controls which tag system the prompt builder uses.
+- **Sending `elements`/`reference_image_urls` to Kling V3 Pro or Kling O3 Pro (non-R2V):** Returns 400. Only R2V models support these params.
 - **Sending `resolution`/`aspect_ratio` to Kling image-to-video models:** Returns 400. These are derived from the input image automatically.
-- **Omitting `aspect_ratio` from R2V models:** The R2V model (`kling-o3-standard-reference-to-video`) **requires** `aspect_ratio`. If omitted, it defaults to `16:9` in code but the API may reject it. Always pass `aspect_ratio: '16:9'` (or `'9:16'`) explicitly.
+- **Omitting `aspect_ratio` from R2V models:** Both Seedance R2V and Kling O3 R2V require `aspect_ratio`. If omitted, it defaults to `16:9` in code. Always pass `aspect_ratio` explicitly.
 - **Sending `image_references`/`image_1` to `nano-banana-pro`:** Returns 400. The generation model does not accept reference payloads at all.
-- **Sending `duration: "3s"` to Veo 3.1:** Returns 400. Only 4s/6s/8s are valid.
+- **Sending invalid durations:** Seedance 2.0 accepts 4s/5s/8s/10s/12s/15s. Veo 3.1 accepts 4s/6s/8s. Duration auto-snap corrects this.
 - **Reference images below 300x300:** R2V models reject `reference_image_urls` and `elements` images smaller than 300x300 pixels. Never downscale character references below this threshold.
 
 ### Visual Contamination

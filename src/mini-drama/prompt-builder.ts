@@ -11,10 +11,12 @@ import {
   FEMALE_BASE_TRAITS,
   MALE_BASE_TRAITS,
   KLING_MULTISHOT_MODEL,
+  KLING_R2V_MODEL,
   DAYTIME_ENVIRONMENTS,
   MODELS_SUPPORTING_ELEMENTS,
   MODELS_SUPPORTING_REFERENCE_IMAGES,
   MODELS_SUPPORTING_SCENE_IMAGES,
+  MODELS_USING_IMAGE_TAGS,
   DEFAULT_CHARACTER_CONSISTENCY_MODEL,
 } from '../series/types.js';
 import type { AestheticProfile } from '../storyboard/prompt-builder.js';
@@ -121,6 +123,8 @@ export interface ModelResolution {
   reason: string;
   autoUseElements: boolean;
   autoUseReferenceImages: boolean;
+  /** Use @Image1/@Image2 tags instead of @Element1/@Element2 (Seedance, Grok Imagine R2V). */
+  useImageTags: boolean;
 }
 
 /**
@@ -152,7 +156,6 @@ export function resolveVideoModel(
 
   const hasCharacters = shot.characters.length > 0;
 
-  // No characters on screen — use the prompt-first action/atmosphere model
   if (!hasCharacters) {
     return {
       modelId: baseModel,
@@ -160,16 +163,35 @@ export function resolveVideoModel(
       reason: 'no characters — prompt-first model',
       autoUseElements: false,
       autoUseReferenceImages: false,
+      useImageTags: false,
     };
   }
 
-  // Any shot with characters uses R2V for identity anchoring
+  // 3+ characters with a flat-ref R2V model (e.g. Seedance) — fall back to
+  // Kling O3 R2V which supports structured elements for better per-character
+  // identity separation when reference image budget is tight.
+  const needsElementsFallback = shot.characters.length >= 3
+    && MODELS_USING_IMAGE_TAGS.has(consistencyModel)
+    && !MODELS_SUPPORTING_ELEMENTS.has(consistencyModel);
+
+  if (needsElementsFallback) {
+    return {
+      modelId: KLING_R2V_MODEL,
+      upgraded: true,
+      reason: '3+ characters — falling back to Kling O3 R2V for structured elements',
+      autoUseElements: true,
+      autoUseReferenceImages: true,
+      useImageTags: false,
+    };
+  }
+
   return {
     modelId: consistencyModel,
     upgraded: consistencyModel !== baseModel,
     reason: 'characters present — R2V for identity anchoring',
     autoUseElements: MODELS_SUPPORTING_ELEMENTS.has(consistencyModel),
     autoUseReferenceImages: MODELS_SUPPORTING_REFERENCE_IMAGES.has(consistencyModel),
+    useImageTags: MODELS_USING_IMAGE_TAGS.has(consistencyModel),
   };
 }
 
@@ -302,6 +324,7 @@ export function buildVideoPrompt(
     || (shot.useElements && MODELS_SUPPORTING_ELEMENTS.has(modelId));
   const useRefs = resolution.autoUseReferenceImages
     || (shot.useReferenceImages && MODELS_SUPPORTING_REFERENCE_IMAGES.has(modelId));
+  const useImageTags = resolution.useImageTags;
 
   const resolvedCharacters = shot.characters
     .map(name => series.characters.find(c => c.name.toUpperCase() === name.toUpperCase()))
@@ -309,23 +332,25 @@ export function buildVideoPrompt(
 
   let characterElements: CharacterElementSlot[] | undefined;
 
-  if (useElements && resolvedCharacters.length > 0) {
-    characterElements = resolvedCharacters.slice(0, 2).map((char, index) => ({
+  if ((useElements || useImageTags) && resolvedCharacters.length > 0) {
+    characterElements = resolvedCharacters.slice(0, useImageTags ? 4 : 2).map((char, index) => ({
       characterName: char.name,
       elementIndex: index + 1,
     }));
   }
+
+  const tagPrefix = useImageTags ? '@Image' : '@Element';
 
   const parts: string[] = [];
 
   const cameraTerm = CAMERA_TERMS[shot.cameraMovement.toLowerCase()] ?? shot.cameraMovement;
   parts.push(`${cameraTerm}.`);
 
-  if (useElements && characterElements) {
+  if ((useElements || useImageTags) && characterElements) {
     let desc = shot.description;
     for (const slot of characterElements) {
       const re = new RegExp(`\\b${slot.characterName}\\b`, 'gi');
-      desc = desc.replace(re, `@Element${slot.elementIndex}`);
+      desc = desc.replace(re, `${tagPrefix}${slot.elementIndex}`);
     }
     parts.push(desc);
   } else {
@@ -338,13 +363,12 @@ export function buildVideoPrompt(
     );
     const voiceDesc = speakingChar?.voiceDescription ?? '';
     const delivery = shot.dialogue.delivery || '';
-    const charRef = useElements && characterElements
+    const charRef = (useElements || useImageTags) && characterElements
       ? (characterElements.find(s => s.characterName.toUpperCase() === shot.dialogue!.character.toUpperCase())
-        ? `@Element${characterElements.find(s => s.characterName.toUpperCase() === shot.dialogue!.character.toUpperCase())!.elementIndex}`
+        ? `${tagPrefix}${characterElements.find(s => s.characterName.toUpperCase() === shot.dialogue!.character.toUpperCase())!.elementIndex}`
         : shot.dialogue.character)
       : shot.dialogue.character;
 
-    // Kling 3.0 dialogue format: [Character, voice description]: "line"
     const voiceParts = [voiceDesc, delivery].filter(Boolean).join(', ');
     parts.push(`[${charRef}, ${voiceParts}]: "${shot.dialogue.line}"`);
   }
@@ -353,8 +377,11 @@ export function buildVideoPrompt(
     parts.push(`Sound of ${shot.sfx}.`);
   }
 
+  // Scene image refs use @Image tags — offset indices when image tags are
+  // already used for character refs so tags don't collide.
   if (shot.sceneImagePaths && shot.sceneImagePaths.length > 0 && MODELS_SUPPORTING_SCENE_IMAGES.has(modelId)) {
-    const refs = shot.sceneImagePaths.slice(0, 4).map((_, i) => `@Image${i + 1}`);
+    const sceneOffset = useImageTags ? (characterElements?.length ?? 0) : 0;
+    const refs = shot.sceneImagePaths.slice(0, 4).map((_, i) => `@Image${sceneOffset + i + 1}`);
     parts.push(`Scene style references: ${refs.join(', ')}.`);
   }
 
