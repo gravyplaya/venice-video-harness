@@ -23,12 +23,13 @@ Most Venice integrations are thin wrappers around API calls. This harness is the
 - **TypeScript execution layer** in `src/`
 - **Comprehensive model registry** covering 50+ Venice video, image, audio, and music models
 
-## Supported Venice Models (March 2026)
+## Supported Venice Models (April 2026)
 
 ### Video Models
 
 | Family | Image-to-Video | Text-to-Video | Max Duration | Audio | Special Features |
 |--------|---------------|---------------|-------------|-------|-----------------|
+| **Seedance 2.0** | i2v, R2V | t2v | 15s | Yes (stereo, lip-sync 8+ langs) | **#1 ranked.** R2V: flat `reference_image_urls`, `@Image` tags. Superior physics and cinematic quality. |
 | **Kling V3** | Pro, Standard | Pro, Standard | 15s | Yes | `end_image_url` for frame targeting |
 | **Kling O3** | Pro, Standard, Pro R2V, Standard R2V | Pro, Standard | 15s | Yes | R2V: `elements`, `reference_image_urls`, `scene_image_urls` |
 | **Kling 2.6** | Pro | Pro | 10s | Yes | `end_image_url` |
@@ -46,6 +47,8 @@ Most Venice integrations are thin wrappers around API calls. This harness is the
 | **PixVerse v5.6** | Standard, Transition | Standard | 8s | Yes | Transition: `end_image_url` |
 | **Grok Imagine** | Yes | Yes | 15s | Yes | Wide aspect ratio support |
 | **OVI** | Yes | — | 5s | Yes | |
+
+> **Regional availability:** Seedance 2.0 is not available to users in North America via Venice. If your Venice account is region-locked to North America, the harness will fall back to Kling O3 R2V for character shots and Veo 3.1 for atmosphere shots. Override the defaults in your `series.json` `videoDefaults` to select regionally available models.
 
 ### Image Models (22 generation + 1 background-remove)
 
@@ -197,16 +200,19 @@ const refModels = listVideoModels({ supportsElements: true });
 
 The harness defaults are opinionated because consistency is the point:
 
-**R2V by default. Atmosphere model only for empty establishing shots.**
+**Seedance R2V by default. Kling O3 R2V fallback for 3+ character scenes. Seedance i2v for establishing shots.**
 
-Almost all shots should use the R2V (reference-to-video) model for consistency. It supports `elements` and `reference_image_urls` for identity anchoring. Non-R2V models have zero reference support. The atmosphere model is only for truly empty establishing/mood shots with no characters.
+Seedance 2.0 (#1 ranked on [Artificial Analysis Video Arena](https://artificialanalysis.ai/)) is the default for both character shots and establishing/atmosphere shots. It uses flat `reference_image_urls` with `@Image` prompt tags for identity anchoring. For scenes with 3+ characters, the system automatically falls back to Kling O3 R2V, which provides structured `elements` for better per-character identity separation.
 
 | Role | Default Model | When Used |
 |------|--------------|-----------|
-| **Default (all non-establishing)** | `kling-o3-standard-reference-to-video` | All shots with characters or story action — `elements` + `reference_image_urls` |
-| **Establishing / mood only** | `veo3.1-fast-image-to-video` | Empty establishing/mood shots — up to 4K |
+| **Character shots (1-2 characters)** | `seedance-2-0-reference-to-video` | Default R2V — flat `reference_image_urls` with `@Image` tags, up to 15s, native stereo audio |
+| **Character shots (3+ characters)** | `kling-o3-standard-reference-to-video` | Auto-fallback — structured `elements` for multi-character identity |
+| **Establishing / mood / action** | `seedance-2-0-image-to-video` | No characters — epic cinematic quality, physics-aware, up to 15s |
 
 These defaults are overridable per-project via `series.json` → `videoDefaults`.
+
+> **North American users:** Seedance 2.0 is not available in North America via Venice. Set your `videoDefaults` to use `kling-o3-standard-reference-to-video` (character consistency) and `veo3.1-fast-image-to-video` (atmosphere) instead. See the [Venice blog post](https://venice.ai/blog/seedance-sota-video-generation-live-on-venice) for current regional availability.
 
 ## Reference Implementation
 
