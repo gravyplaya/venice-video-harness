@@ -242,7 +242,11 @@ export const SHOTLIST: ShotSpec[] = [
       "candelabra's flames flicker very slightly. Behind them the four planets rotate",
       "almost imperceptibly. Camera does not move. No music.",
     ].join(" "),
-    routing: { kind: "r2v-multi", characters: ["wexley", "constance", "conductor", "teddy"] },
+    // NOTE: was r2v-multi (Kling O3) but Kling O3 standard R2V caps elements at 3
+    // and we have 4 characters. The panel already shows all 4 perfectly composed,
+    // so within a single 5s shot we can rely on i2v animation alone — no identity
+    // drift risk inside a 5-second clip with no cuts. See BUILD_JOURNAL.
+    routing: { kind: "i2v" },
   },
 
   // ── Shot 3 ── Wexley alone in compartment ───────────────────────────────
@@ -298,19 +302,17 @@ export const SHOTLIST: ShotSpec[] = [
     num: 5,
     duration: "5s",
     panelPrompt: [
-      "Perfectly symmetric WIDE establishing shot, rear-view, of the interior of a",
-      "luxury train observation lounge. Dead-center composition. A single pink-velvet",
+      "Perfectly symmetric WIDE establishing shot of the empty interior of a luxury",
+      "train observation lounge. Dead-center composition. A single empty pink-velvet",
       "bench sits in the exact dead center of the room, in front of a vast curved",
-      "panoramic viewing window filling the entire back wall. Seated on the bench,",
-      "seen from directly behind in silhouette so no face is visible (the back of",
-      "the head and the shoulders), is a single passenger in a tailored mustard-yellow",
-      "short-trouser suit and matching mustard knee socks (Teddy, the lone passenger).",
-      "Through the curved panoramic window in front of the figure, the planet Pluto",
-      "looms enormous and pale grey-pink, filling two-thirds of the back wall. Tall",
-      "brass railings frame the window. Polished dark-wood floor reflects the pale",
-      "Pluto-light. A small monogrammed leather valise rests on the floor beside the",
-      "bench. Wes Anderson dollhouse tableau, painterly, low contrast, vast empty",
-      "lounge with one small figure facing the planet, 16:9.",
+      "panoramic viewing window filling the entire back wall. Through the curved",
+      "panoramic window, the planet Pluto looms enormous and pale grey-pink, filling",
+      "two-thirds of the back wall, surface craters faintly visible. Tall brass",
+      "railings frame the window. Polished dark-wood floor reflects the pale Pluto-light.",
+      "Embroidered plum-velvet wall panels with brass-thread filigree on either side.",
+      "A small monogrammed leather travel valise rests on the floor beside the bench.",
+      "Wes Anderson dollhouse tableau, painterly, low contrast, vast quiet empty room",
+      "facing a planet, no people present, 16:9.",
     ].join(" "),
     videoPrompt: [
       "Locked symmetric medium shot of @Image1 (the small boy in mustard suit) sitting",
@@ -371,20 +373,24 @@ export const VO_TEXT = [
 
 // ---- Music & SFX cues -----------------------------------------------------
 
+// NOTE (2026-04-17): ElevenLabs rejects prompts naming living composers. An
+// earlier version said "in the style of Mark Mothersbaugh and Alexandre Desplat"
+// and returned a 422 content-policy violation. Re-worded to describe the vibe
+// with generic cinematic adjectives instead.
 export const MUSIC_PROMPT = [
   "A solo celesta playing a slow, melancholy, wistful 3/4 waltz in A minor,",
   "joined at the halfway mark by very gentle pizzicato strings and a single",
-  "muted French horn long-tone. Sparse, dry, intimate, Wes Anderson film score",
-  "in the style of Mark Mothersbaugh and Alexandre Desplat. Quiet, contemplative,",
-  "no drums, no percussion, no electronic elements. Acoustic chamber instruments only.",
-  "A faintly melancholy lullaby for a train departing into the void.",
+  "muted French horn long-tone. Sparse, dry, intimate, evocative of a whimsical",
+  "and cinematic film score with quiet, contemplative mood, no drums, no percussion,",
+  "no electronic elements. Acoustic chamber instruments only. A faintly melancholy",
+  "lullaby for a train departing into the void.",
 ].join(" ");
 
+// ElevenLabs SFX v2 caps duration low and dislikes meta-instructions like
+// "loopable bed" / "no music, no voices". Prompt kept under 25 words.
 export const SFX_PROMPT = [
-  "Soft continuous ambience: a gentle steady mechanical hum of an old train in motion,",
-  "a slow rhythmic clack-clack-clack of wheels on rails, faint distant steam hiss,",
-  "subtle hollow reverberation as if heard from inside a wooden carriage. Low volume,",
-  "no music, no voices. Loopable bed.",
+  "Inside a vintage train: gentle mechanical hum,",
+  "slow rhythmic wheel clacking on rails, faint distant steam hiss, soft wooden carriage reverberation.",
 ].join(" ");
 
 // ---- Audio mix levels (dB, relative to -0 dBFS source) -------------------
