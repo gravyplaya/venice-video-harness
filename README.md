@@ -48,8 +48,6 @@ Most Venice integrations are thin wrappers around API calls. This harness is the
 | **Grok Imagine** | Yes | Yes | 15s | Yes | Wide aspect ratio support |
 | **OVI** | Yes | — | 5s | Yes | |
 
-> **Regional availability:** Seedance 2.0 is not available to users in North America via Venice. If your Venice account is region-locked to North America, the harness will fall back to Kling O3 R2V for character shots and Veo 3.1 for atmosphere shots. Override the defaults in your `series.json` `videoDefaults` to select regionally available models.
-
 > **Seedance provenance requirement:** Seedance 2.0 **blocks** any request whose input images (panels, character references, scene refs, end frames) were produced by a family other than `seedream-v5-lite` / `seedream-v5-lite-edit`. The harness pairs image defaults to the video family automatically — see [Image / Video Family Pairing](#image--video-family-pairing) below.
 
 ### Image Models (22 generation + 1 background-remove)
@@ -212,9 +210,7 @@ Seedance 2.0 (#1 ranked on [Artificial Analysis Video Arena](https://artificiala
 | **Character shots (3+ characters)** | `kling-o3-standard-reference-to-video` | Auto-fallback — structured `elements` for multi-character identity |
 | **Establishing / mood / action** | `seedance-2-0-image-to-video` | No characters — epic cinematic quality, physics-aware, up to 15s |
 
-These defaults are overridable per-project via `series.json` → `videoDefaults`.
-
-> **North American users:** Seedance 2.0 is not available in North America via Venice. Set your `videoDefaults` to use `kling-o3-standard-reference-to-video` (character consistency) and `veo3.1-fast-image-to-video` (atmosphere) instead, and flip `videoDefaults.imageDefaults` back to `nano-banana-pro` / `nano-banana-pro-edit`. See the [Venice blog post](https://venice.ai/blog/seedance-sota-video-generation-live-on-venice) for current regional availability.
+These defaults are overridable per-project via `series.json` → `videoDefaults`. To target a non-Seedance family (e.g. for accounts that lack Seedance access, or projects that need a different look), set `videoDefaults` to `kling-o3-standard-reference-to-video` (character consistency) and `veo3.1-fast-image-to-video` (atmosphere), and flip `videoDefaults.imageDefaults` back to `nano-banana-pro` / `nano-banana-pro-edit`.
 
 ## Image / Video Family Pairing
 

@@ -149,8 +149,6 @@ The full model registry lives in `src/venice/models.ts` with typed specs for eve
 
 Almost all shots should use a reference-to-video model for identity anchoring. Seedance 2.0 R2V (#1 ranked) is the new default, using flat `reference_image_urls` with `@Image` prompt tags. For shots with 3+ characters, the system automatically falls back to Kling O3 R2V which provides structured `elements` for better per-character identity separation. Empty establishing/mood shots use Seedance i2v for its superior cinematic quality and physics.
 
-**Regional restriction:** Seedance 2.0 is not available to North American users via Venice. If the user is in North America, override `videoDefaults` in `series.json` to use `kling-o3-standard-reference-to-video` (character consistency) and `veo3.1-fast-image-to-video` (atmosphere).
-
 Preferred defaults (overridable per-project via `series.json` → `videoDefaults`):
 
 | Role | Default Model | When Used |
@@ -168,7 +166,7 @@ Preferred defaults (overridable per-project via `series.json` → `videoDefaults
 
 Seedance 2.0 will **block** any video request whose input images (`image_url`, `end_image_url`, `reference_image_urls`, `scene_image_urls`, `elements[].frontal_image_url`, etc.) were not produced by `seedream-v5-lite` or edited by `seedream-v5-lite-edit`. The image defaults above are the only compatible choice while the video target is Seedance.
 
-If you override the video defaults to a non-Seedance family (e.g. Kling / Veo for NA users), you can safely revert the image defaults to `nano-banana-pro` + `nano-banana-pro-edit` via `series.json → videoDefaults.imageDefaults`.
+If you override the video defaults to a non-Seedance family (e.g. Kling / Veo), you can safely revert the image defaults to `nano-banana-pro` + `nano-banana-pro-edit` via `series.json → videoDefaults.imageDefaults`.
 
 ### Seedance Pre-flight Gate
 
