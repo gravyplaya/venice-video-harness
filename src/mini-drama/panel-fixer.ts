@@ -232,8 +232,10 @@ export async function fixPanel(
 
   // Record the edit in the panel's provenance sidecar so the Seedance
   // pre-flight gate can tell whether the panel is still compatible.
+  // fixPanel is always called with at least one character reference, so
+  // the panel now contains a human face.
   const editModelUsed = model ?? 'seedream-v5-lite-edit';
-  await recordEditProvenance(panelPath, editModelUsed);
+  await recordEditProvenance(panelPath, editModelUsed, { hasFace: true });
 
   console.log(`  Fixed panel saved: ${panelPath}`);
   return panelPath;
@@ -300,6 +302,11 @@ export async function refineStyleConsistency(
   if (origW > 0 && origH > 0) {
     await restoreAspectRatio(panelPath, origW, origH);
   }
+
+  // Style refinement explicitly preserves no-character panels, so mark
+  // hasFace:false so Seedance accepts this panel regardless of edit model.
+  const editModelUsed = model ?? 'seedream-v5-lite-edit';
+  await recordEditProvenance(panelPath, editModelUsed, { hasFace: false });
 
   console.log(`  Style-matched panel saved: ${panelPath}`);
   return panelPath;

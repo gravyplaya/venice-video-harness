@@ -48,7 +48,7 @@ Most Venice integrations are thin wrappers around API calls. This harness is the
 | **Grok Imagine** | Yes | Yes | 15s | Yes | Wide aspect ratio support |
 | **OVI** | Yes | — | 5s | Yes | |
 
-> **Seedance provenance requirement:** Seedance 2.0 **blocks** any request whose input images (panels, character references, scene refs, end frames) were produced by a family other than `seedream-v5-lite` / `seedream-v5-lite-edit`. The harness pairs image defaults to the video family automatically — see [Image / Video Family Pairing](#image--video-family-pairing) below.
+> **Seedance face rule:** Seedance 2.0 blocks **face-bearing** input images that weren't produced by `seedream-v5-lite` or `seedream-v5-lite-edit`. Faceless images (atmosphere, establishing, scene refs, object inserts, silhouettes) pass through any family. The harness picks image models per-shot automatically — see [Image / Video Family Pairing](#image--video-family-pairing) below.
 
 ### Image Models (22 generation + 1 background-remove)
 
@@ -214,14 +214,17 @@ These defaults are overridable per-project via `series.json` → `videoDefaults`
 
 ## Image / Video Family Pairing
 
-Seedance 2.0 **blocks** any video request whose input images (`image_url`, `end_image_url`, `reference_image_urls`, `scene_image_urls`, `elements[].frontal_image_url`, etc.) were not produced by `seedream-v5-lite` or edited by `seedream-v5-lite-edit`. Because of this, the harness pins image defaults to the Seedance-compatible family whenever the video target is Seedance:
+Seedance 2.0 blocks **face-bearing** input images that weren't produced by `seedream-v5-lite` or `seedream-v5-lite-edit`. Faceless images (atmosphere, establishing, scene refs, object inserts, silhouettes) pass through any family. The harness therefore picks the image model per-shot based on whether the shot contains characters:
 
 | Image Role | Default | Why |
 |------------|---------|-----|
-| Generation (`POST /image/generate`) | `seedream-v5-lite` | Only accepted input family for Seedance |
-| Multi-edit (`POST /image/multi-edit`) | `seedream-v5-lite-edit` | Only accepted input family for Seedance |
+| Character reference sheets | `seedream-v5-lite` | Always face-bearing; required for Seedance |
+| Character-bearing panels | `seedream-v5-lite` | Face-bearing; required for Seedance |
+| Character fix via multi-edit | `seedream-v5-lite-edit` | Touches faces; required for Seedance |
+| Atmosphere / establishing panels | `nano-banana-pro` (configurable) | Faceless — better quality from nano-banana |
+| Style-match multi-edit (no characters) | `nano-banana-pro-edit` (configurable) | Faceless — any family works |
 
-These are configured per-project under `series.json`:
+The faceless-side defaults are configurable per-project under `series.json`:
 
 ```json
 {
@@ -230,26 +233,41 @@ These are configured per-project under `series.json`:
     "atmosphereModel": "seedance-2-0-image-to-video",
     "characterConsistencyModel": "seedance-2-0-reference-to-video",
     "imageDefaults": {
-      "generationModel": "seedream-v5-lite",
-      "editModel": "seedream-v5-lite-edit"
+      "generationModel": "nano-banana-pro",
+      "editModel": "nano-banana-pro-edit"
     },
     "seedanceCompatibility": "prompt"
   }
 }
 ```
 
+The face-bearing side (`seedream-v5-lite` / `seedream-v5-lite-edit`) is hardcoded because it's the only family Seedance accepts for face inputs. If your project targets a non-Seedance video family (e.g. Kling / Veo), you can additionally switch face-bearing work to `nano-banana-pro` — the face rule only applies when the video target is Seedance.
+
 ### Seedance Pre-flight Gate
 
 Even when defaults are correct, users occasionally bring existing assets (panels from a previous project, hand-crafted references, etc.). Before every Seedance call the harness runs a pre-flight gate that:
 
 1. Reads the provenance sidecar (`shot-NNN.provenance.json`) next to each input image
-2. Confirms each image's generation / most-recent-edit model is in the Seedance-compatible set
-3. If any are incompatible, behaves according to `seedanceCompatibility`:
+2. Skips any image marked `hasFace: false` (Seedance accepts those from any family)
+3. Confirms each remaining image's generation / most-recent-edit model is in the Seedance-compatible set
+4. If any face-bearing images are incompatible, behaves according to `seedanceCompatibility`:
    - **`prompt`** (default in interactive shells) — list the offending files and ask the user to choose `fallback` or `launder`
    - **`fallback`** (default in non-TTY / CI) — reroute this shot to `kling-o3-standard-reference-to-video` (R2V) or `veo3.1-fast-image-to-video` (i2v); other shots in the run continue to use Seedance if they're compatible
    - **`launder`** — re-render each incompatible image through `seedream-v5-lite-edit` with a neutral "preserve image" prompt so it acquires compatible provenance, archive the pre-launder original, then proceed with Seedance
 
-Provenance sidecars are written automatically by the storyboard assembler, panel-fixer, reference-manager, and the mini-drama panel generator. Images without a sidecar (e.g. files from before this change) are treated as "unknown" and will always trigger the pre-flight gate.
+The sidecar shape:
+
+```json
+{
+  "generationModel": "seedream-v5-lite",
+  "editModels": ["seedream-v5-lite-edit"],
+  "hasFace": true,
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+
+Provenance sidecars are written automatically by the storyboard assembler, panel-fixer, reference-manager, and the mini-drama panel generator. Images without a sidecar (e.g. files from before this change) are treated as "unknown" and will trigger the pre-flight gate. If you know an existing image has no face, hand-edit its sidecar to add `"hasFace": false` and the gate will pass.
 
 If you want to skip the pre-flight entirely, target a non-Seedance video model (e.g. switch `videoDefaults` to Kling O3 + Veo).
 
@@ -324,7 +342,7 @@ The harness documents 13 production anti-patterns learned from real shoots in `C
 - Multi-edit cropping foreheads on close-up panels
 - Lighting inconsistency between consecutive shots
 - Logo/sigil prompt mismatches
-- Seedance 2.0 blocking non-seedream input images (provenance pairing)
+- Seedance 2.0 blocking face-bearing non-seedream images (face-rule + provenance gate)
 - And more
 
 See `CLAUDE.md` > "Learned Anti-Patterns" for the full list with root causes and fixes.

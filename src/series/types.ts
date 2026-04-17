@@ -202,16 +202,26 @@ export const KLING_R2V_MODEL = 'kling-o3-standard-reference-to-video';
 export const KLING_MULTISHOT_MODEL = 'kling-o3-pro-image-to-video';
 
 /**
- * Paired image defaults for the Seedance family. Seedance 2.0 blocks any
- * request whose input images were not produced by `seedream-v5-lite` or
- * edited by `seedream-v5-lite-edit`, so these are the only compatible
- * defaults when the video target is a Seedance model.
+ * Default image models used when no face is present in the image.
+ *
+ * Seedance 2.0 only blocks FACE-BEARING images from non-seedream families,
+ * so faceless images (atmosphere, establishing, scene refs, object inserts)
+ * can be generated / edited with any model. The harness pairs these with
+ * nano-banana-pro for better non-face quality.
  */
-export const DEFAULT_IMAGE_GENERATION_MODEL = 'seedream-v5-lite';
-export const DEFAULT_IMAGE_EDIT_MODEL = 'seedream-v5-lite-edit';
+export const DEFAULT_IMAGE_GENERATION_MODEL = 'nano-banana-pro';
+export const DEFAULT_IMAGE_EDIT_MODEL = 'nano-banana-pro-edit';
 
 /**
- * Models whose outputs Seedance 2.0 accepts as input images.
+ * Required image models when the image contains a human face AND the video
+ * target is Seedance. Seedance 2.0 will reject face-bearing images produced
+ * by any other family.
+ */
+export const SEEDANCE_FACE_GENERATION_MODEL = 'seedream-v5-lite';
+export const SEEDANCE_FACE_EDIT_MODEL = 'seedream-v5-lite-edit';
+
+/**
+ * Models whose outputs Seedance 2.0 accepts as face-bearing input images.
  * Updated as Venice expands cross-family compatibility.
  */
 export const SEEDANCE_COMPATIBLE_GENERATION_MODELS = new Set<string>([

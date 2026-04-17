@@ -1,13 +1,20 @@
 // ---------------------------------------------------------------------------
 // Seedance 2.0 Compatibility Pre-flight
 //
-// Seedance 2.0 (both R2V and i2v variants) blocks any video request whose
-// input images (`image_url`, `end_image_url`, `reference_image_urls`,
-// `scene_image_urls`, elements[].frontal_image_url, etc.) were not produced
-// by `seedream-v5-lite` or edited by `seedream-v5-lite-edit`.
+// Seedance 2.0 (both R2V and i2v variants) blocks face-bearing input images
+// that weren't produced by `seedream-v5-lite` or edited by
+// `seedream-v5-lite-edit`. Faceless images (establishing shots, scene refs,
+// atmosphere plates) pass regardless of provenance.
+//
+// This gate reads each input image's provenance sidecar — which records
+// `hasFace: true|false` alongside the generation/edit models — and only
+// flags images that both (a) contain a face and (b) came from a
+// non-seedream family. That means a nano-banana-generated atmosphere
+// plate marked `hasFace: false` passes freely, while a nano-banana-
+// generated character portrait marked `hasFace: true` is flagged.
 //
 // Running this check before every Seedance call lets us:
-//   1. Detect incompatible images that would otherwise 4xx from Venice
+//   1. Detect face-bearing images that would otherwise 4xx from Venice
 //   2. Offer the user an interactive choice:
 //      - fallback: route this shot to Kling O3 R2V / Veo atmosphere
 //      - launder: pass each incompatible image through seedream-v5-lite-edit
@@ -161,8 +168,10 @@ function reportIncompatibility(
 ): void {
   console.warn('');
   console.warn(`  ⚠ Seedance pre-flight: ${targetModel} will block this request.`);
-  console.warn(`    Seedance 2.0 only accepts images from seedream-v5-lite / seedream-v5-lite-edit.`);
-  console.warn(`    ${entries.length} incompatible image(s) detected:`);
+  console.warn(`    Seedance 2.0 blocks face-bearing images that weren't produced by`);
+  console.warn(`    seedream-v5-lite / seedream-v5-lite-edit. Mark sidecars with`);
+  console.warn(`    hasFace:false for images with no human faces to skip this check.`);
+  console.warn(`    ${entries.length} image(s) flagged:`);
   for (const entry of entries) {
     console.warn(`      • ${entry.imagePath}`);
     console.warn(`        ${entry.reason}`);

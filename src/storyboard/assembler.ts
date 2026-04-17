@@ -123,12 +123,15 @@ const DEFAULT_RESOLUTION = "1K";
 const DEFAULT_ASPECT_RATIO = "16:9";
 
 /**
- * Model used for generation.
- * `seedream-v5-lite` aligns with the Seedance 2.0 video pipeline; Seedance
- * blocks images from other families. Override per-scene if targeting a
- * non-Seedance video pipeline (e.g. Kling/Veo).
+ * Models used for generation, chosen per-shot based on face presence.
+ *
+ * Seedance 2.0 only blocks face-bearing images from non-seedream families,
+ * so faceless panels can use the higher-quality nano-banana-pro, while
+ * face-bearing panels must use seedream-v5-lite to remain Seedance-
+ * compatible downstream.
  */
-const DEFAULT_MODEL = "seedream-v5-lite";
+const FACE_MODEL = "seedream-v5-lite";
+const NO_FACE_MODEL = "nano-banana-pro";
 
 /** Diffusion steps -- higher = better quality, slower. */
 const DEFAULT_STEPS = 30;
@@ -189,14 +192,20 @@ export class StoryboardAssembler {
       let imageBase64: string;
       let usedSeed: number;
 
+      // Choose the generation model based on face presence. Face-bearing
+      // panels need seedream-v5-lite so they can be passed to Seedance
+      // video; faceless panels use the higher-quality no-face model.
+      const hasFace = (shot.characters?.length ?? 0) > 0;
+      const imageModel = hasFace ? FACE_MODEL : NO_FACE_MODEL;
+
       if (pr.referenceImages.length > 0) {
         // Use reference-augmented generation
-        const result = await this.generateWithReferences(client, pr);
+        const result = await this.generateWithReferences(client, pr, imageModel);
         imageBase64 = result.base64;
         usedSeed = result.seed ?? 0;
       } else {
         // Standard generation (no character references)
-        const result = await this.generateStandard(client, pr);
+        const result = await this.generateStandard(client, pr, imageModel);
         imageBase64 = result.base64;
         usedSeed = result.seed ?? 0;
       }
@@ -209,9 +218,8 @@ export class StoryboardAssembler {
       await writeFile(imagePath, imageBuffer);
 
       // Track which image model produced this panel so the Seedance
-      // pre-flight gate can validate it later. StoryboardAssembler always
-      // uses DEFAULT_MODEL for generation.
-      await writeImageProvenance(imagePath, DEFAULT_MODEL);
+      // pre-flight gate can validate it later.
+      await writeImageProvenance(imagePath, imageModel, [], { hasFace });
 
       // Save video prompt JSON alongside the image
       const vp = videoPrompts?.[i];
@@ -408,11 +416,12 @@ export class StoryboardAssembler {
   private async generateStandard(
     client: VeniceClient,
     pr: PromptResult,
+    model: string = NO_FACE_MODEL,
   ): Promise<{ base64: string; seed: number | undefined }> {
     const raw = await client.post<Record<string, unknown>>(
       "/api/v1/image/generate",
       {
-        model: DEFAULT_MODEL,
+        model,
         prompt: pr.prompt,
         negative_prompt: pr.negativePrompt,
         resolution: DEFAULT_RESOLUTION,
@@ -446,13 +455,14 @@ export class StoryboardAssembler {
   private async generateWithReferences(
     client: VeniceClient,
     pr: PromptResult,
+    model: string = FACE_MODEL,
   ): Promise<{ base64: string; seed: number | undefined }> {
     // nano-banana-pro does not accept reference image payloads (image_1, image_2, etc.).
     // Character consistency relies on exhaustive text descriptions + seed anchoring.
     const raw = await client.post<Record<string, unknown>>(
       "/api/v1/image/generate",
       {
-        model: DEFAULT_MODEL,
+        model,
         prompt: pr.prompt,
         negative_prompt: pr.negativePrompt,
         resolution: DEFAULT_RESOLUTION,

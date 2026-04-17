@@ -156,27 +156,46 @@ Preferred defaults (overridable per-project via `series.json` → `videoDefaults
 | Character shots (1-2 characters) | `seedance-2-0-reference-to-video` | Default R2V — `reference_image_urls` with `@Image` tags, up to 15s, native stereo audio |
 | Character shots (3+ characters) | `kling-o3-standard-reference-to-video` | Auto-fallback — structured `elements` + `reference_image_urls` for multi-character identity |
 | Establishing / mood / action (no chars) | `seedance-2-0-image-to-video` | Epic cinematic quality, physics-aware, up to 15s, native audio |
-| Image Generation | `seedream-v5-lite` | **Required pairing** with Seedance video — Seedance blocks images from other families |
-| Multi-Edit | `seedream-v5-lite-edit` | **Required pairing** with Seedance video — see pre-flight gate notes below |
+| Image Generation (face-bearing) | `seedream-v5-lite` | **Required** when the image contains a human face and the video target is Seedance 2.0 |
+| Image Generation (faceless) | `nano-banana-pro` | Atmosphere / establishing / scene refs — any family is fine, nano-banana-pro gives best quality |
+| Multi-Edit (character fix) | `seedream-v5-lite-edit` | Required when editing a face-bearing panel that will feed Seedance |
+| Multi-Edit (style-match, no face) | `nano-banana-pro-edit` | Refining non-character panels — any family works |
 | TTS | `tts-kokoro` | 50+ voices, fast, consistent |
 | Music | `elevenlabs-music` | High quality music generation |
 | SFX | `elevenlabs-sound-effects-v2` | Best sound effect quality |
 
 ### Image / Video Family Pairing
 
-Seedance 2.0 will **block** any video request whose input images (`image_url`, `end_image_url`, `reference_image_urls`, `scene_image_urls`, `elements[].frontal_image_url`, etc.) were not produced by `seedream-v5-lite` or edited by `seedream-v5-lite-edit`. The image defaults above are the only compatible choice while the video target is Seedance.
+Seedance 2.0 only blocks **face-bearing** input images that weren't produced by `seedream-v5-lite` or edited by `seedream-v5-lite-edit`. Faceless images (establishing shots, atmosphere plates, object inserts, scene refs, silhouettes) pass through any family without a problem.
 
-If you override the video defaults to a non-Seedance family (e.g. Kling / Veo), you can safely revert the image defaults to `nano-banana-pro` + `nano-banana-pro-edit` via `series.json → videoDefaults.imageDefaults`.
+The harness therefore picks the image model per-shot based on whether the shot contains characters:
+
+- Character panels / references → `seedream-v5-lite` (and `seedream-v5-lite-edit` for fixes) — required for Seedance
+- Atmosphere / establishing panels → `nano-banana-pro` (the series' configurable `videoDefaults.imageDefaults.generationModel`) — gives better quality for non-character scenes
+
+If the video target isn't Seedance at all (e.g. Kling / Veo), face-bearing shots don't need seedream either — override `videoDefaults` and you can use `nano-banana-pro` across the board.
 
 ### Seedance Pre-flight Gate
 
-Before every Seedance call, the harness reads the provenance sidecars next to each input image and verifies they came from `seedream-v5-lite` / `seedream-v5-lite-edit`. If any are incompatible, behavior is controlled by `series.videoDefaults.seedanceCompatibility`:
+Before every Seedance call, the harness reads the provenance sidecars next to each input image and skips any marked `hasFace: false`. Face-bearing images (or images with unknown face status) are validated against the seedream compatibility set. If any face-bearing images were produced by a non-seedream family, behavior is controlled by `series.videoDefaults.seedanceCompatibility`:
 
 - `prompt` (default in interactive shells): print the offending files and ask the user to choose `fallback` or `launder`
 - `fallback` (default in non-TTY / CI): reroute this specific shot to the Kling O3 R2V / Veo 3.1 fallback so the original Seedance-incompatible assets still work
 - `launder`: re-render each incompatible image through `seedream-v5-lite-edit` with a neutral "preserve image" prompt before retrying the Seedance call (archives the pre-launder original next to each file)
 
-The provenance sidecar format is `shot-NNN.provenance.json` next to each PNG, with `{ generationModel, editModels[], createdAt, updatedAt }`. The storyboard assembler, panel-fixer, reference-manager, and mini-drama panel generator all write this automatically. Images without sidecars (e.g. old assets from before this change) are treated as "unknown" and will trigger the pre-flight gate.
+The provenance sidecar format is `shot-NNN.provenance.json` next to each PNG:
+
+```json
+{
+  "generationModel": "seedream-v5-lite",
+  "editModels": ["seedream-v5-lite-edit"],
+  "hasFace": true,
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+
+The storyboard assembler, panel-fixer, reference-manager, and mini-drama panel generator all write this automatically. Images without sidecars (e.g. old assets from before this change) are treated as "unknown" and will trigger the pre-flight gate so the user can decide whether they have faces. If you know an existing image has no face, you can hand-edit the sidecar to set `"hasFace": false` and it will pass.
 
 ## Video Queue Request Parameters
 
@@ -291,7 +310,7 @@ Use `POST /video/quote` (via `quoteVideo()`) to estimate costs before committing
 21. **Use "lens switch" for Seedance multi-shot sequences.** Seedance 2.0 supports native multi-shot via "lens switch" in prompts to signal cuts, maintaining character/environment continuity across transitions within a single generation.
 22. **Seedance excels at physics-aware prompting.** Describe forces, not just actions — "tires smoke as car drifts 90 degrees" rather than "car turns." Friction, weight, material interactions, and contact physics produce better results with Seedance's physics-aware training.
 23. **3+ character shots auto-fallback to Kling O3 R2V.** When the default R2V model is Seedance (flat refs, max 4 images), shots with 3+ characters automatically fall back to Kling O3 R2V which supports structured `elements` for better per-character identity separation.
-24. **Seedance input images must come from `seedream-v5-lite` / `seedream-v5-lite-edit`.** Seedance 2.0 blocks any request whose input images were produced by a different family (nano-banana, flux, recraft, etc). The harness pairs image defaults to the video family automatically and runs a provenance pre-flight before every Seedance call. When editing existing assets, never pass them to a Seedance model without running them through `seedream-v5-lite-edit` first, or change the video target to a non-Seedance family (Kling O3 R2V + Veo 3.1). See `src/venice/seedance-preflight.ts` and `src/venice/provenance.ts`.
+24. **Seedance only blocks face-bearing images from non-seedream families.** Character portraits, character panels, and any image that depicts a recognizable human face must come from `seedream-v5-lite` or `seedream-v5-lite-edit` when the video target is Seedance 2.0. Faceless images (atmosphere plates, establishing shots, object inserts, silhouettes, scene refs) are accepted from any family. The provenance sidecar records `hasFace: true|false` and the pre-flight gate skips faceless images automatically. When editing existing face-bearing assets, pass them through `seedream-v5-lite-edit` first, or switch the video target to a non-Seedance family (Kling O3 R2V + Veo 3.1). See `src/venice/seedance-preflight.ts` and `src/venice/provenance.ts`.
 
 ## Learned Anti-Patterns (Production Issues Log)
 
@@ -370,16 +389,18 @@ Issues discovered during production and their fixes. The agent should internaliz
 **Fix:** Use an "inverted" approach: start from the character's reference image (e.g., `profile.png`) as the base image and multi-edit the background/environment onto it. This guarantees the face IS the reference.
 **Rule:** For close-up character shots, prefer the inverted pipeline: start from the character reference image and edit the background, rather than generating a scene and editing the face.
 
-### 13. Seedance 2.0 Blocks Non-Seedream Input Images
-**Symptom:** Every Seedance 2.0 video call 4xx'd with a provenance/safety rejection when the panels and character references were generated with `nano-banana-pro`, `flux-2-pro`, or any other family.
-**Root cause:** Seedance 2.0 only accepts input images produced by `seedream-v5-lite` or edited by `seedream-v5-lite-edit`. The harness had previously defaulted all image generation to `nano-banana-2` / `nano-banana-pro` — so the moment Seedance became the default video model, every request became incompatible.
+### 13. Seedance 2.0 Blocks Face-Bearing Non-Seedream Images
+**Symptom:** Seedance 2.0 video calls 4xx'd when character portraits or character-bearing panels were generated with `nano-banana-pro`, `flux-2-pro`, or any other family. Initially thought to be a blanket ban on all non-seedream images.
+**Root cause:** Seedance's gate specifically rejects input images that contain a recognizable human face when they weren't produced by `seedream-v5-lite` / `seedream-v5-lite-edit`. Images without human faces (establishing shots, atmosphere plates, scene refs, object inserts, silhouettes) are accepted from any family.
 **Fix:**
-- Changed image and multi-edit defaults to `seedream-v5-lite` / `seedream-v5-lite-edit` in `reference-manager.ts`, `generate.ts`, `edit.ts`, `multi-edit.ts`, `storyboard/assembler.ts`, and the mini-drama CLI flags.
-- Added `imageDefaults` and `seedanceCompatibility` to `VideoModelDefaults` so a project can override per-family pairing.
-- Added provenance sidecars (`shot-NNN.provenance.json`) via `src/venice/provenance.ts`, written whenever the harness generates or multi-edits an image.
-- Added a pre-flight gate (`src/venice/seedance-preflight.ts`) that runs before every Seedance call, checks every input image's sidecar, and — if any are incompatible — either prompts the user, reroutes the shot to Kling O3 R2V / Veo 3.1, or launders the images through `seedream-v5-lite-edit`.
-**Rule:** When the video target is Seedance, the image-generation family MUST be seedream. If a project is intentionally using a different image family, override `videoDefaults.imageDefaults` AND override the video target to a non-Seedance family (Kling O3 + Veo). Never mix Seedance video with nano-banana / flux / recraft / etc. images.
-**Files:** `src/venice/provenance.ts`, `src/venice/seedance-preflight.ts`, `src/series/types.ts`, `src/series/manager.ts`, `src/mini-drama/video-generator.ts`
+- Added `hasFace` tracking to image provenance sidecars.
+- Relaxed the pre-flight gate to only flag images where `hasFace !== false` and the generator is non-seedream.
+- Split image-model defaults by context: `seedream-v5-lite` for face-bearing work (character refs, character panels, multi-edit character fixes), `nano-banana-pro` for faceless work (atmosphere, establishing, style match). The mini-drama CLI and storyboard assembler pick per-shot based on `shot.characters.length`.
+- Added `imageDefaults` and `seedanceCompatibility` to `VideoModelDefaults` so faceless-side defaults remain overridable.
+- Added provenance sidecars (`shot-NNN.provenance.json`) via `src/venice/provenance.ts`, written by the storyboard assembler, panel-fixer, reference-manager, and mini-drama panel generator.
+- Added a pre-flight gate (`src/venice/seedance-preflight.ts`) that runs before every Seedance call and — if any face-bearing images are incompatible — prompts the user, reroutes the shot to Kling O3 R2V / Veo 3.1, or launders the images through `seedream-v5-lite-edit`.
+**Rule:** The Seedance face rule applies only to images with human faces. Always generate character-bearing panels and references with seedream; you can use `nano-banana-pro` freely for atmosphere/establishing/insert shots. When editing face-bearing panels, use `seedream-v5-lite-edit`. If a project intentionally uses non-seedream face-bearing images, override `videoDefaults` to a non-Seedance family (Kling O3 + Veo).
+**Files:** `src/venice/provenance.ts`, `src/venice/seedance-preflight.ts`, `src/series/types.ts`, `src/series/manager.ts`, `src/mini-drama/video-generator.ts`, `src/storyboard/assembler.ts`
 
 ## Output
 

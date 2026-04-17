@@ -3,9 +3,10 @@ import type { VeniceClient } from './client.js';
 import type { MultiEditModel, MultiEditRequest } from './types.js';
 
 const MULTI_EDIT_PATH = '/api/v1/image/multi-edit';
-// Default is `seedream-v5-lite-edit` so that edited images are accepted by
-// Seedance 2.0 as references. Seedance blocks images produced by other
-// families. Override per-call when targeting a non-Seedance video pipeline.
+// Safe low-level fallback. Seedance 2.0 only gates face-bearing images, so
+// callers editing non-face panels can safely override with any model. The
+// default remains `seedream-v5-lite-edit` because the most common use of
+// multi-edit is fixing character appearance — where the face rule applies.
 const DEFAULT_EDIT_MODEL: MultiEditModel = 'seedream-v5-lite-edit';
 
 export interface MultiEditOptions {

@@ -679,8 +679,16 @@ program
         const storyboardAR = series.storyboardAspectRatio ?? '16:9';
         let imgBuffer: Buffer;
 
-        // For character shots, use generateWithReferences for identity anchoring
+        // For character shots, use generateWithReferences for identity anchoring.
+        // Panels with characters need seedream-v5-lite so the output can be
+        // sent to Seedance 2.0 video; faceless panels can use whatever the
+        // project's imageDefaults specifies (nano-banana-pro by default for
+        // better atmosphere quality).
         const hasChars = shot.characters && shot.characters.length > 0;
+        const panelModel = hasChars
+          ? 'seedream-v5-lite'
+          : (series.videoDefaults.imageDefaults?.generationModel ?? 'nano-banana-pro');
+
         if (hasChars) {
           const charRefs = shot.characters
             .map(name => {
@@ -699,6 +707,7 @@ program
 
           if (charRefs.length > 0) {
             const result = await generateWithReferences(client, {
+              model: panelModel,
               prompt: imagePrompt.prompt,
               negative_prompt: imagePrompt.negativePrompt,
               resolution: '1K',
@@ -714,6 +723,7 @@ program
             imgBuffer = Buffer.from(result.base64, 'base64');
           } else {
             const response = await generateImage(client, {
+              model: panelModel,
               prompt: imagePrompt.prompt,
               negative_prompt: imagePrompt.negativePrompt,
               resolution: '1K',
@@ -728,6 +738,7 @@ program
           }
         } else {
           const response = await generateImage(client, {
+            model: panelModel,
             prompt: imagePrompt.prompt,
             negative_prompt: imagePrompt.negativePrompt,
             resolution: '1K',
@@ -756,11 +767,11 @@ program
             }
           } catch { /* conversion is best-effort */ }
 
-          // Record provenance — both generateImage and generateWithReferences
-          // use the default in src/venice/generate.ts when no explicit model
-          // is supplied, which the harness now pins to seedream-v5-lite.
-          const panelModel = series.videoDefaults.imageDefaults?.generationModel ?? 'seedream-v5-lite';
-          await writeImageProvenance(imgPath, panelModel);
+          // Record provenance — `panelModel` was chosen above based on
+          // whether this shot has characters. `hasFace` is true when the
+          // shot has named (non-silhouette) characters; Seedance only
+          // gates face-bearing images.
+          await writeImageProvenance(imgPath, panelModel, [], { hasFace: hasChars });
 
           newlyGenerated.add(shot.shotNumber);
           generatedCount++;
