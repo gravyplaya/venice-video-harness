@@ -102,7 +102,7 @@ import {
   type ShotApproval,
 } from './panel-approval.js';
 import { shotKey } from './shot-paths.js';
-import { generateEpisodeVideos } from './video-generator.js';
+import { DEFAULT_RENDER_CONCURRENCY, generateEpisodeVideos } from './video-generator.js';
 import { generateVoiceReference, harvestVoiceReferenceFromClip } from './voice-reference.js';
 import { generateLocationReferences } from './location-generator.js';
 import {
@@ -3492,7 +3492,13 @@ program
   .option('--no-montage', 'Disable montage-first planning for this run (fall back to 2.0-era per-shot / 15s multi-shot units).')
   .option('--auto-edit', 'After cutting montage renders, let the harness assemble the edit automatically (overrides videoDefaults.autoEdit for this run).')
   .option('--no-auto-edit', 'Provide the montage cuts in the media library only; do not auto-assemble.')
-  .action(async (opts: { project: string; episode: number; skipQa: boolean; seedanceKeyframe: boolean; montage: boolean; autoEdit?: boolean }) => {
+  .option('--concurrency <n>', 'Units to render at once. A unit that starts from the previous clip\'s last frame still waits for it; 1 renders one at a time.', String(DEFAULT_RENDER_CONCURRENCY))
+  .action(async (opts: { project: string; episode: number; skipQa: boolean; seedanceKeyframe: boolean; montage: boolean; autoEdit?: boolean; concurrency: string }) => {
+    const concurrency = Number(opts.concurrency);
+    if (!Number.isInteger(concurrency) || concurrency < 1) {
+      console.error(`--concurrency must be a whole number of at least 1 (got ${opts.concurrency}).`);
+      process.exit(1);
+    }
     const series = await loadSeries(resolve(opts.project));
     if (!series) { console.error('Series not found.'); process.exit(1); }
 
@@ -3607,7 +3613,9 @@ program
       }
     }
 
-    const { videoPaths, plan } = await generateEpisodeVideos(client, series, script.shots, sceneDir, generationPlan, effectiveAudioMix);
+    const { videoPaths, plan } = await generateEpisodeVideos(
+      client, series, script.shots, sceneDir, generationPlan, effectiveAudioMix, { concurrency },
+    );
     await saveGenerationPlan(episodeDir, plan);
 
     const ep = series.episodes.find(e => e.number === opts.episode);

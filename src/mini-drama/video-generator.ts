@@ -64,13 +64,18 @@ import {
   reportProgress,
   throwIfAborted,
 } from '../venice/operation-context.js';
+import { hasLinePrefix, runWithLinePrefix } from '../venice/line-prefix.js';
 import { classifyVideoQueueRefusal, type VideoRefusal } from '../venice/refusal.js';
 
 const VIDEO_QUEUE_PATH = '/api/v1/video/queue';
 const VIDEO_RETRIEVE_PATH = '/api/v1/video/retrieve';
 const VIDEO_COMPLETE_PATH = '/api/v1/video/complete';
 const POLL_INTERVAL_MS = 10_000;
+/** With units rendering side by side, an unchanged poll status is reprinted this often. */
+const POLL_LINE_EVERY_MS = 60_000;
 const MULTISHOT_RETRY_DELAY_MS = 15_000;
+/** Units `generateEpisodeVideos` renders at once unless told otherwise. */
+export const DEFAULT_RENDER_CONCURRENCY = 3;
 /**
  * Ceiling on a single shot's poll loop. Generous relative to real render times
  * (~30 min worst case) but finite: the loop used to be `while (true)`, so a job
@@ -420,6 +425,9 @@ async function persistCharacterJson(series: SeriesState, character: SeriesState[
   await writeFile(join(dir, 'character.json'), JSON.stringify(character, null, 2), 'utf-8');
 }
 
+/** Voice-reference generations under way, keyed by project and character. */
+const voiceReferencesInFlight = new Map<string, Promise<void>>();
+
 /**
  * Ensure the dialogue speaker for a shot has a voice-donor reference clip when
  * the shot routes to a reference-audio-capable model and voice references
@@ -447,14 +455,24 @@ export async function ensureVoiceReferenceForShot(
   const abs = resolveVoiceReferenceAbsPath(series, character);
   if (character.voiceReferencePath && abs && existsSync(abs)) return; // already present
 
-  try {
-    const { relPath, model } = await generateVoiceReference(client, series, character);
-    character.voiceReferencePath = relPath;
-    character.voiceReferenceModel = model;
-    await persistCharacterJson(series, character);
-  } catch (err) {
-    console.warn(`  ⚠ Voice reference generation failed for ${character.name} (${(err as Error).message}); shot will fall back to the [Char, voiceDesc] text.`);
-  }
+  // Units render concurrently, so two dialogue shots for one speaker can get
+  // here together; the second waits on the first instead of paying again.
+  const key = `${resolvePath(series.outputDir)}::${character.name.toUpperCase()}`;
+  const inFlight = voiceReferencesInFlight.get(key);
+  if (inFlight) return inFlight;
+
+  const generation = (async () => {
+    try {
+      const { relPath, model } = await generateVoiceReference(client, series, character);
+      character.voiceReferencePath = relPath;
+      character.voiceReferenceModel = model;
+      await persistCharacterJson(series, character);
+    } catch (err) {
+      console.warn(`  ⚠ Voice reference generation failed for ${character.name} (${(err as Error).message}); shot will fall back to the [Char, voiceDesc] text.`);
+    }
+  })().finally(() => voiceReferencesInFlight.delete(key));
+  voiceReferencesInFlight.set(key, generation);
+  return generation;
 }
 
 function resolveVoiceReferencePaths(
@@ -1154,6 +1172,8 @@ async function pollRenderedVideo(
 
   let elapsed = 0;
   let consecutiveErrors = 0;
+  let lastPrintedStatus: string | undefined;
+  let lastPrintedAt = 0;
   while (true) {
     throwIfAborted();
     if (elapsed >= MAX_POLL_MS) {
@@ -1245,7 +1265,13 @@ async function pollRenderedVideo(
         : '';
       await touchPendingJob(jobKey);
       reportProgress({ phase: 'poll', detail: `${status.status} ${pct}`.trim() });
-      process.stdout.write(`\r  Polling... ${status.status} ${pct}   `);
+      if (!hasLinePrefix()) {
+        process.stdout.write(`\r  Polling... ${status.status} ${pct}   `);
+      } else if (status.status !== lastPrintedStatus || elapsed - lastPrintedAt >= POLL_LINE_EVERY_MS) {
+        console.log(`  Polling... ${status.status} ${pct}`.trimEnd());
+        lastPrintedStatus = status.status;
+        lastPrintedAt = elapsed;
+      }
     } catch (err) {
       if (isAbortError(err)) throw err;
       // Terminal verdicts are not transient poll errors; never count or retry them.
@@ -2185,6 +2211,31 @@ export function assertShotDurationsValid(
   );
 }
 
+export interface GenerateEpisodeVideosOptions {
+  /**
+   * Units rendered at once (default {@link DEFAULT_RENDER_CONCURRENCY}). `1`
+   * renders one unit at a time in plan order.
+   */
+  concurrency?: number;
+}
+
+interface PreparedUnit {
+  unit: GenerationUnit;
+  shots: ShotScript[];
+  /** Last shot of the closest earlier unit, for prompt continuity. */
+  previousShot?: ShotScript;
+  nextShotNumber?: number;
+}
+
+/**
+ * Render every unit in the plan, up to `options.concurrency` at once.
+ *
+ * Units start in plan order. A unit whose start frame is the previous clip's
+ * last frame (`startFrameStrategy: 'previous-last-frame'`) waits for that clip;
+ * every other unit renders from its own panel or references and does not wait.
+ * After a failure no further unit starts, and units already queued (Venice has
+ * billed them) are polled to completion before the first error is rethrown.
+ */
 export async function generateEpisodeVideos(
   client: VeniceClient,
   series: SeriesState,
@@ -2192,11 +2243,16 @@ export async function generateEpisodeVideos(
   sceneDir: string,
   plan: GenerationPlan,
   episodeAudioMix?: import('venice-video-harness/core/series/types.js').AudioMixDefaults,
+  options: GenerateEpisodeVideosOptions = {},
 ): Promise<GenerateEpisodeVideosResult> {
   // Fail fast on duration / model mismatches before any Venice queue call.
   assertShotDurationsValid(shots, plan);
 
-  const videoPaths: string[] = [];
+  const requested = options.concurrency ?? DEFAULT_RENDER_CONCURRENCY;
+  if (!Number.isInteger(requested) || requested < 1) {
+    throw new Error(`Render concurrency must be a whole number of at least 1 (got ${requested}).`);
+  }
+
   // Suffixed inserts ("13b") share their base shotNumber, so a Map keyed by
   // shotNumber collapses "13" and "13b" onto one entry and the base shot is
   // silently skipped as "video exists" (the insert's video). The plan is
@@ -2205,11 +2261,8 @@ export async function generateEpisodeVideos(
   // only as a fallback for hand-edited plans.
   const shotsByNumber = new Map(shots.map(shot => [shot.shotNumber, shot]));
   let shotCursor = 0;
-  let previousRenderedShotPath: string | undefined;
   let previousShot: ShotScript | undefined;
-
-  for (let unitIndex = 0; unitIndex < plan.units.length; unitIndex++) {
-    const unit = plan.units[unitIndex];
+  const prepared: PreparedUnit[] = plan.units.map((unit, unitIndex) => {
     const unitShots = unit.shotNumbers
       .map(shotNumber => {
         const candidate = shots[shotCursor];
@@ -2220,61 +2273,136 @@ export async function generateEpisodeVideos(
         return shotsByNumber.get(shotNumber);
       })
       .filter((shot): shot is ShotScript => Boolean(shot));
-    const nextUnit = plan.units[unitIndex + 1];
-    const nextShotNumber = nextUnit?.shotNumbers[0];
+    const entry: PreparedUnit = {
+      unit,
+      shots: unitShots,
+      previousShot,
+      nextShotNumber: plan.units[unitIndex + 1]?.shotNumbers[0],
+    };
+    if (unitShots.length > 0) previousShot = unitShots[unitShots.length - 1];
+    return entry;
+  });
 
-    if (unitShots.length === 0) continue;
-
-    // Feeds the shell's `/jobs` view, so a backgrounded episode render reports
-    // "unit 3/12 shot 5" instead of only whatever the current poll is doing.
-    reportProgress({
-      phase: 'render',
-      current: unitIndex + 1,
-      total: plan.units.length,
-      detail: `unit ${unitIndex + 1}/${plan.units.length} · shot ${unitShots[0].shotNumber}`,
-    });
-
-    try {
-      const savedPaths = unit.unitType === 'single'
-        ? await renderSingleShotUnit(
-          client,
-          series,
-          unitShots[0],
-          unit,
-          sceneDir,
-          previousRenderedShotPath,
-          nextShotNumber,
-          previousShot,
-          episodeAudioMix,
-        )
-        : unit.unitType === 'montage'
-          ? await renderMontageUnit(
-            client,
-            series,
-            unitShots,
-            unit,
-            sceneDir,
-          )
-          : await renderMultiShotUnitUntilSuccess(
-            client,
-            series,
-            unitShots,
-            unit,
-            sceneDir,
-            previousRenderedShotPath,
-            nextShotNumber,
-          );
-
-      if (savedPaths.length > 0) {
-        videoPaths.push(...savedPaths);
-        previousRenderedShotPath = savedPaths[savedPaths.length - 1];
-      }
-      previousShot = unitShots[unitShots.length - 1];
-      console.log('');
-    } catch (err) {
-      throw err;
-    }
+  const total = prepared.length;
+  const concurrency = Math.min(requested, Math.max(1, total));
+  const parallel = concurrency > 1;
+  if (parallel) {
+    const chained = prepared.filter(p => p.unit.startFrameStrategy === 'previous-last-frame').length;
+    console.log(`Rendering up to ${concurrency} units at once`
+      + `${chained > 0 ? ` (${chained} start from the previous clip's last frame and wait for it)` : ''}.\n`);
   }
 
-  return { videoPaths, plan };
+  // One promise per unit: its saved paths, or null when it did not render
+  // because another unit failed. Chained units read their start frame here.
+  const resolvers: Array<(paths: string[] | null) => void> = [];
+  const rendered = prepared.map((_, index) =>
+    new Promise<string[] | null>(resolve => { resolvers[index] = resolve; }));
+
+  // A chained unit starts from the most recent clip saved before it; units that
+  // rendered nothing (missing panel, rejected take) are skipped over.
+  const lastRenderedBefore = async (index: number): Promise<string | undefined> => {
+    for (let i = index - 1; i >= 0; i--) {
+      const paths = await rendered[i];
+      if (paths && paths.length > 0) return paths[paths.length - 1];
+    }
+    return undefined;
+  };
+
+  let failure: { error: unknown } | undefined;
+  let finished = 0;
+  // Keyed by plan position: a suffixed insert ("13b") shares its base shot's unit id.
+  const inProgress = new Map<number, string>();
+
+  // Feeds the shell's `/jobs` view, so a backgrounded episode render reports
+  // which units are under way instead of only whatever the latest poll said.
+  const reportUnits = (index: number): void => {
+    reportProgress(parallel
+      ? {
+        phase: 'render',
+        current: finished,
+        total,
+        detail: `${finished}/${total} units done · rendering ${[...inProgress.values()].join(', ')}`,
+      }
+      : {
+        phase: 'render',
+        current: index + 1,
+        total,
+        detail: `unit ${index + 1}/${total} · shot ${prepared[index].shots[0].shotNumber}`,
+      });
+  };
+
+  const renderUnit = (index: number, previousRenderedShotPath: string | undefined): Promise<string[]> => {
+    const { unit, shots: unitShots, previousShot: unitPreviousShot, nextShotNumber } = prepared[index];
+    if (unit.unitType === 'single') {
+      return renderSingleShotUnit(
+        client,
+        series,
+        unitShots[0],
+        unit,
+        sceneDir,
+        previousRenderedShotPath,
+        nextShotNumber,
+        unitPreviousShot,
+        episodeAudioMix,
+      );
+    }
+    if (unit.unitType === 'montage') {
+      return renderMontageUnit(client, series, unitShots, unit, sceneDir);
+    }
+    return renderMultiShotUnitUntilSuccess(
+      client,
+      series,
+      unitShots,
+      unit,
+      sceneDir,
+      previousRenderedShotPath,
+      nextShotNumber,
+    );
+  };
+
+  // Workers take units in plan order, so a unit's predecessors have always
+  // started before it waits on them; nothing can wait on a unit not yet taken.
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < total && !failure) {
+      const index = next++;
+      const { unit, shots: unitShots } = prepared[index];
+      if (unitShots.length === 0) {
+        resolvers[index]([]);
+        continue;
+      }
+
+      const previousRenderedShotPath = unit.startFrameStrategy === 'previous-last-frame'
+        ? await lastRenderedBefore(index)
+        : undefined;
+      if (failure) {
+        resolvers[index](null);
+        break;
+      }
+
+      inProgress.set(index, unit.unitId);
+      reportUnits(index);
+      try {
+        const paths = parallel
+          ? await runWithLinePrefix(`[${unit.unitId}] `, () => renderUnit(index, previousRenderedShotPath))
+          : await renderUnit(index, previousRenderedShotPath);
+        resolvers[index](paths);
+        if (!parallel) console.log('');
+      } catch (error) {
+        failure ??= { error };
+        resolvers[index](null);
+      } finally {
+        inProgress.delete(index);
+        finished += 1;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: concurrency }, worker));
+
+  if (failure) {
+    for (const resolve of resolvers) resolve(null);
+    throw failure.error;
+  }
+  const outcomes = await Promise.all(rendered);
+  return { videoPaths: outcomes.flatMap(paths => paths ?? []), plan };
 }
