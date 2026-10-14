@@ -1355,6 +1355,25 @@ The `stream` command registers its episode in `series.json` if it is missing, so
 the Stream tab always has an episode to show. (Before 2.21.1 a stream under an
 unregistered episode rendered beats the browser could not display.)
 
+### Units render in parallel
+
+`generate-videos` renders up to three units at once, since nearly all of a
+render's time is spent waiting in Venice's queue. Units start in plan order. A
+unit whose start frame is the previous clip's last frame (the planner picks
+this only for a dissolve, match cut, morph, wipe, crossfade or fade into a shot
+with the same characters) waits for that clip; every other unit starts from its
+own panel or references. Each line a unit prints starts with its id, such as
+`[unit-004]`.
+
+```bash
+venice-video generate-videos -p ~/VeniceVideos/my-film -e 1 --concurrency 5
+venice-video generate-videos -p ~/VeniceVideos/my-film -e 1 --concurrency 1   # one at a time
+```
+
+If a unit fails, no further unit starts. Units already queued have been billed,
+so they are polled to completion before the command exits with the first
+error. Re-running skips every shot that already has a video.
+
 ### Interrupted renders are resumable
 
 The harness records each Venice `queue_id` to disk *before* it starts polling, so

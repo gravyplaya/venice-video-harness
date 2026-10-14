@@ -164,6 +164,24 @@
 
 ### Added
 
+- **`generate-videos` renders up to three units at once.** Units used to
+  render one after another, and nearly all of an episode's time went to
+  waiting in Venice's queue for one clip at a time. `generateEpisodeVideos`
+  now runs a worker pool (new `concurrency` option, default
+  `DEFAULT_RENDER_CONCURRENCY` = 3; CLI `--concurrency <n>`, where `1` is the
+  old behaviour). Units start in plan order. A unit with
+  `startFrameStrategy: 'previous-last-frame'` (the planner's choice only for a
+  dissolve, match cut, morph, wipe, crossfade or fade into a shot with the same
+  characters) waits for the clip before it; the units after it don't. After a
+  failure no new unit starts, and units already queued (billed) are polled to
+  completion before the first error is rethrown. While units overlap, every
+  line one prints starts with its unit id (`src/venice/line-prefix.ts`, the
+  same AsyncLocalStorage patch as the shell's output router), and the poll
+  prints a line on each status change and once a minute instead of rewriting
+  one terminal line. Two concurrent dialogue shots for one speaker now share
+  one voice-reference generation instead of each paying for it. Test:
+  `tests/parallel-units.test.mjs` (five of its seven tests fail on the old
+  sequential loop).
 - **40 video lanes from the drift report (#50).** The live catalog listed 51
   ids the registry didn't. Each added lane's durations and resolutions are
   what `/video/quote`'s enum errors accept; privacy, aspect ratios and audio

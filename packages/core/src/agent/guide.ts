@@ -45,6 +45,7 @@ export const AGENT_GUIDE: readonly GuideSection[] = [
       'generate-videos, assemble-episode, produce-episode, finish, and upscale run 3–10 minutes.',
       'Runners cap foreground commands (Hermes defaults to 180s, hard cap 600s). Run these in the background with completion notification, not in the foreground.',
       'A foreground timeout kills the process but not the Venice job — see the billing rule above.',
+      'generate-videos renders up to 3 units at once (--concurrency N; 1 renders one at a time), and each line a unit prints starts with its id, e.g. [unit-004]. A unit that starts from the previous clip\'s last frame waits for it. After a failure no new unit starts; units already queued are billed and finish first.',
     ],
   },
   {
